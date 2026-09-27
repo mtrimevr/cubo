@@ -99,6 +99,7 @@ body {
 .hold { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; background: var(--sheet); border: 1px solid var(--rule); }
 .hold img { flex: none; width: 64px; height: 64px; border-radius: 4px; object-fit: cover; }
 .hold p { margin: 0; font-size: 15px; }
+.live-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
 .live-tip {
   position: absolute; left: 12px; right: 12px; bottom: 14px; display: none;
   padding: 10px 14px; border-radius: 10px; background: rgba(0, 0, 0, .66); color: #fff;
@@ -2317,7 +2318,7 @@ THE SOFTWARE.
 }).call(this);
 
 </script>
-<script>
+<script id="core-src">
 // Mirror cube face analyzer: finds the black groove grid on one face
 // and measures the three layer widths along both face axes.
 // Pure JS, no dependencies. Input: RGBA bytes, width, height.
@@ -3856,22 +3857,54 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     finishScan();
   }
 
-  // ---------- live scan: the camera inside the page, read on the fly ----------
-  const live = { on: false, stream: null, video: null, buf: [], proc: null, raf: 0, track: null, torch: false };
-  const NEED = 6;   // steady readings in a row before a face is confirmed
+  // ---------- live scan, done like a professional scanner ----------
+  // 1) The camera preview is the <video> itself: it stays smooth whatever the analysis does.
+  // 2) The analysis runs in a background worker, one frame at a time, as fast as it can.
+  // 3) Once the cube is found, only the area around it is analysed (more detail, less work).
+  // 4) A face is confirmed from several consistent readings within a short time window:
+  //    a blurry frame or a reflection no longer resets the count.
+  const live = { on: false, stream: null, video: null, track: null, torch: false, raf: 0,
+    worker: null, busy: false, jid: 0, jobs: {}, roi: null, roiT: 0, last: null, cand: null,
+    pc: null, audio: null, tip: "", lastPill: "" };
+  const WINDOW_READS = 4, WINDOW_MS = 400, LOSE_MS = 900;
+
+  function makeWorker() {
+    try {
+      const core = document.getElementById("core-src").textContent;
+      const src = core + "\nself.onmessage = function (e) { var d = e.data; var r = MirrorVision.analyzeScrambled(new Uint8ClampedArray(d.buf), d.w, d.h, 33.6); self.postMessage({ id: d.id, res: r }); };";
+      const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+      w.onmessage = (e) => onLiveResult(e.data.id, e.data.res);
+      w.onerror = () => { live.worker = null; live.busy = false; };
+      return w;
+    } catch (e) { return null; }
+  }
+  function beep() {
+    try {
+      const a = live.audio; if (!a) return;
+      const o = a.createOscillator(), g = a.createGain();
+      o.frequency.value = 1320; g.gain.setValueAtTime(0.0001, a.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.25, a.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 0.12);
+      o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.13);
+    } catch (e) { /* no sound */ }
+  }
 
   async function startLive() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { liveUnavailable(); return; }
+    try { live.audio = live.audio || new (window.AudioContext || window.webkitAudioContext)(); live.audio.resume(); } catch (e) { /* ignore */ }
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) { liveUnavailable(); return; }
     if (st.phase !== "scan") newScan();
     const v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.srcObject = stream;
+    v.className = "live-video";
+    wrap.insertBefore(v, stage);
     try { await v.play(); } catch (e) { /* frames still arrive */ }
-    Object.assign(live, { on: true, stream, video: v, buf: [], track: stream.getVideoTracks()[0], torch: false });
-    // light on by default when the phone allows the page to use it
+    Object.assign(live, { on: true, stream, video: v, track: stream.getVideoTracks()[0], torch: false,
+      busy: false, jobs: {}, roi: null, last: null, cand: null });
+    live.worker = live.worker || makeWorker();
     try {
       const caps = live.track.getCapabilities ? live.track.getCapabilities() : {};
       if (caps.torch) { await live.track.applyConstraints({ advanced: [{ torch: true }] }); live.torch = true; $("#btnTorch").hidden = false; }
@@ -3886,7 +3919,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     cancelAnimationFrame(live.raf);
     live.on = false;
     if (live.stream) live.stream.getTracks().forEach((t) => t.stop());
-    live.stream = null; live.video = null; live.buf = [];
+    if (live.video) live.video.remove();
+    live.stream = null; live.video = null; live.cand = null; live.last = null; live.busy = false; live.jobs = {};
     app.dataset.live = "off";
     $("#liveTip").textContent = "";
     drawStage();
@@ -3898,12 +3932,128 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const box = $("#scanResult"); box.innerHTML = "";
     const r = el("div", "result"); r.append(el("p", "", msg)); box.append(r);
   }
-  function liveHint(res, pw, ph) {
-    if (!res || res.why === "nogold") return "Inquadra il cubo";
-    if (res.why === "cut") return "Allontanati un po', la faccia esce dall'inquadratura";
-    if (res.why === "grid" || res.why === "grooves") return "Telefono dritto, parallelo alla faccia";
-    if (res.why === "sticker") return "Tieni fermo, evita riflessi forti";
-    return "Tieni fermo";
+  function liveHint(res) {
+    if (!res || res.why === "nogold") return "inquadra il cubo";
+    if (res.why === "cut") return "allontanati un po', la faccia esce dall'inquadratura";
+    if (res.why === "grid" || res.why === "grooves") return "telefono dritto, parallelo alla faccia";
+    if (res.why === "sticker") return "tieni fermo, evita riflessi forti";
+    return "tieni fermo";
+  }
+
+  // Face outline in the analysed crop -> rectangle in video pixels.
+  function faceBox(res, job) {
+    const px = res.px || {}, [g1, g2] = res.g, [h1, h2] = res.h;
+    const ext = (nm, d, dflt) => (px[nm] && px[nm][d]) || dflt;
+    const m = g2 - g1;
+    const us = [g1 - ext("TL", "left", 0.5 * m), g1 - ext("L", "left", 0.5 * m), g1 - ext("BL", "left", 0.5 * m), g2 + ext("TR", "right", 0.5 * m), g2 + ext("R", "right", 0.5 * m), g2 + ext("BR", "right", 0.5 * m)];
+    const vs = [h1 - ext("TL", "up", 0.5 * m), h1 - ext("T", "up", 0.5 * m), h1 - ext("TR", "up", 0.5 * m), h2 + ext("BL", "down", 0.5 * m), h2 + ext("B", "down", 0.5 * m), h2 + ext("BR", "down", 0.5 * m)];
+    const pts = [];
+    for (const u of [Math.min(...us), Math.max(...us)]) for (const v of [Math.min(...vs), Math.max(...vs)]) pts.push(MirrorVision.toImage(res, u, v));
+    const xs = pts.map((p) => job.roi.x + p[0] / job.k), ys = pts.map((p) => job.roi.y + p[1] / job.k);
+    return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+  }
+
+  function sendFrame() {
+    const v = live.video, vw = v.videoWidth, vh = v.videoHeight, now = performance.now();
+    const roi = live.roi && now - live.roiT < LOSE_MS ? live.roi : { x: 0, y: 0, w: vw, h: vh };
+    const target = roi.w === vw && roi.h === vh ? 420 : 380;
+    const k = Math.min(1, target / Math.max(roi.w, roi.h));
+    const pw = Math.max(16, Math.round(roi.w * k)), ph = Math.max(16, Math.round(roi.h * k));
+    const c = document.createElement("canvas");
+    c.width = pw; c.height = ph;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.drawImage(v, roi.x, roi.y, roi.w, roi.h, 0, 0, pw, ph);
+    const img = g.getImageData(0, 0, pw, ph);
+    const id = ++live.jid;
+    live.jobs[id] = { roi, k, crop: c, t: now };
+    live.busy = true;
+    if (live.worker) live.worker.postMessage({ id, buf: img.data.buffer, w: pw, h: ph }, [img.data.buffer]);
+    else setTimeout(() => onLiveResult(id, MirrorVision.analyzeScrambled(img.data, pw, ph, MIDDLE)), 0);
+  }
+
+  function consistent(reads) {
+    const spreads = [];
+    for (const nm in MirrorVision.STICKERS) for (const d of MirrorVision.STICKERS[nm][2]) {
+      const v = reads.map((r) => r.ext && r.ext[nm] && r.ext[nm][d]).filter((x) => typeof x === "number");
+      if (v.length >= 3) spreads.push(Math.max(...v) - Math.min(...v));
+    }
+    return spreads.length >= 6 && medianOf(spreads) <= 3;
+  }
+
+  function onLiveResult(id, res) {
+    const job = live.jobs[id]; delete live.jobs[id];
+    live.busy = false;
+    if (!live.on || !job || st.cur < 0) return;
+    const now = performance.now(), v = live.video;
+    res.job = job;
+    const slot = st.cur;
+    let msg = null, bad = !res.ok;
+    if (res.ok) {
+      const box = faceBox(res, job);
+      const bw = box.x1 - box.x0, bh = box.y1 - box.y0, mx = 0.4 * Math.max(bw, bh);
+      const x0 = Math.max(0, box.x0 - mx), y0 = Math.max(0, box.y0 - mx);
+      live.roi = { x: x0, y: y0, w: Math.min(v.videoWidth, box.x1 + mx) - x0, h: Math.min(v.videoHeight, box.y1 + mx) - y0 };
+      live.roiT = now;
+      if (Math.max(bw, bh) < 0.18 * Math.min(v.videoWidth, v.videoHeight)) { msg = "avvicinati un po', a circa 30 cm"; bad = true; }
+    }
+    if (res.ok && !msg) {
+      const twin = st.slots.findIndex((o, j) => j !== slot && o.res && o.res.ok && MirrorVision.sameFace(res, o.res) < 3);
+      if (twin >= 0) { msg = `questa è «${SLOTS[twin].name}», già letta`; bad = true; live.cand = null; }
+    }
+    if (!bad) {
+      let c = live.cand;
+      if (!c || MirrorVision.sameFace(res, c.ref) >= 3) c = live.cand = { ref: res, reads: [], t0: now, last: now };
+      c.reads.push(res); c.last = now;
+      if (c.reads.length > 12) c.reads.shift();
+      c.frac = Math.min(c.reads.length / WINDOW_READS, (now - c.t0) / WINDOW_MS);
+      if (c.frac >= 1 && consistent(c.reads)) { live.last = res; confirmLive(c, job); return; }
+      msg = "tieni fermo…";
+    } else {
+      if (!msg) msg = liveHint(res);
+      if (live.cand && now - live.cand.last > LOSE_MS) live.cand = null;
+    }
+    live.last = res;
+    live.tip = msg === "tieni fermo…" ? `${SLOTS[slot].live}: tieni fermo…` : `${SLOTS[slot].live} (${msg})`;
+  }
+
+  function drawMiniMap() {
+    const s = 14 * dpr, gp = 2 * dpr, pos = { U: [1, 0], L: [0, 1], F: [1, 1], R: [2, 1], B: [3, 1], D: [1, 2] };
+    const x0 = stage.width - (4 * s + 3 * gp) - 14 * dpr, y0 = 18 * dpr;
+    ctx.save();
+    for (const f in pos) {
+      const i = SLOTS.findIndex((x) => x.face === f), x = x0 + pos[f][0] * (s + gp), y = y0 + pos[f][1] * (s + gp);
+      const done = st.slots[i] && st.slots[i].res && st.slots[i].res.ok;
+      ctx.fillStyle = done ? LINE : "rgba(0,0,0,.45)";
+      ctx.fillRect(x, y, s, s);
+      ctx.lineWidth = (i === st.cur ? 2.2 : 1) * dpr;
+      ctx.strokeStyle = i === st.cur ? "#FFFFFF" : "rgba(255,255,255,.55)";
+      ctx.strokeRect(x, y, s, s);
+    }
+    ctx.restore();
+  }
+
+  function liveLoop() {
+    if (!live.on) return;
+    live.raf = requestAnimationFrame(liveLoop);
+    const v = live.video;
+    if (!v || v.readyState < 2 || !v.videoWidth || st.cur < 0) return;
+    if (!live.busy) sendFrame();
+    const W = stage.width, H = stage.height, vw = v.videoWidth, vh = v.videoHeight;
+    const s = Math.max(W / vw, H / vh), ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+    ctx.clearRect(0, 0, W, H);
+    const r = live.last;
+    if (r && r.job && r.g && performance.now() - r.job.t < 500) {
+      const j = r.job;
+      const map = (x, y) => [(j.roi.x + x / j.k) * s + ox, (j.roi.y + y / j.k) * s + oy];
+      const good = r.ok && live.cand && live.cand.reads.includes(r);
+      drawReading(r, map, !good);
+      if (good) drawProgress(r, map, live.cand.frac || 0);
+    }
+    drawMiniMap();
+    const tip = $("#liveTip");
+    if (tip.textContent !== live.tip) tip.textContent = live.tip;
+    const pill = `Faccia ${st.cur + 1} di 6: ${SLOTS[st.cur].name}`;
+    if (live.lastPill !== pill) { live.lastPill = pill; setPill("busy", pill); }
   }
   function drawProgress(res, map, frac) {
     const [g1, g2] = res.g, [h1, h2] = res.h;
@@ -3911,73 +4061,23 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const [cx, cy] = map(q[0], q[1]);
     const e = MirrorVision.toImage(res, g2, 0.5 * (h1 + h2));
     const [ex] = map(e[0], e[1]);
-    const r = Math.max(14 * dpr, 0.32 * Math.abs(ex - cx) * 2);
+    const rad = Math.max(14 * dpr, 0.64 * Math.abs(ex - cx));
     ctx.save();
     ctx.lineWidth = 6 * dpr; ctx.lineCap = "round";
-    ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.stroke();
-    ctx.strokeStyle = LINE; ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(1, frac)); ctx.stroke();
+    ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.beginPath(); ctx.arc(cx, cy, rad, 0, 2 * Math.PI); ctx.stroke();
+    ctx.strokeStyle = LINE; ctx.beginPath(); ctx.arc(cx, cy, rad, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(1, frac)); ctx.stroke();
     ctx.restore();
   }
-  function liveLoop() {
-    if (!live.on) return;
-    live.raf = requestAnimationFrame(liveLoop);
-    const v = live.video;
-    if (!v || v.readyState < 2 || !v.videoWidth || st.cur < 0) return;
-    const W = stage.width, H = stage.height, vw = v.videoWidth, vh = v.videoHeight;
-    const s = Math.max(W / vw, H / vh), ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
-    ctx.drawImage(v, ox, oy, vw * s, vh * s);
-    const k = Math.min(1, 480 / Math.max(vw, vh)), pw = Math.round(vw * k), ph = Math.round(vh * k);
-    if (!live.proc) live.proc = document.createElement("canvas");
-    const pc = live.proc;
-    if (pc.width !== pw || pc.height !== ph) { pc.width = pw; pc.height = ph; }
-    const g = pc.getContext("2d", { willReadFrequently: true });
-    g.drawImage(v, 0, 0, pw, ph);
-    const res = MirrorVision.analyzeScrambled(g.getImageData(0, 0, pw, ph).data, pw, ph, MIDDLE);
-    const map = (x, y) => [(x / k) * s + ox, (y / k) * s + oy];
-    const slot = st.cur, tip = $("#liveTip");
-    let msg;
-    if (!res.ok) {
-      live.buf = [];
-      msg = liveHint(res, pw, ph);
-      if (res.g) drawReading(res, map, true);
-    } else if (res.m < 0.1 * Math.min(pw, ph)) {
-      live.buf = [];
-      msg = "Avvicinati un po', a circa 30 cm";
-      drawReading(res, map, true);
-    } else {
-      const twin = st.slots.findIndex((o, j) => j !== slot && o.res && o.res.ok && MirrorVision.sameFace(res, o.res) < 3);
-      if (twin >= 0) {
-        live.buf = [];
-        msg = `questa è «${SLOTS[twin].name}», già letta`;
-        drawReading(res, map, true);
-      } else {
-        if (live.buf.length && MirrorVision.sameFace(res, live.buf[0]) >= 3) live.buf = [];
-        const now = performance.now();
-        if (!live.buf.length) live.t0 = now;
-        live.buf.push(res);
-        const frac = Math.min(live.buf.length / NEED, (now - live.t0) / 700);
-        drawReading(res, map, false);
-        drawProgress(res, map, frac);
-        msg = "Tieni fermo…";
-        if (frac >= 1) { confirmLive(res); return; }
-      }
-    }
-    tip.textContent = msg === "Tieni fermo…" ? `${SLOTS[slot].live}: tieni fermo…` : `${SLOTS[slot].live} (${msg.charAt(0).toLowerCase() + msg.slice(1)})`;
-    setPill(res.ok ? "busy" : "idle", `Faccia ${slot + 1} di 6: ${SLOTS[slot].name}`);
-  }
-  function confirmLive(res) {
-    const slot = st.cur, v = live.video;
-    const snap = snapshot(v, v.videoWidth, v.videoHeight);
-    const r900 = readFace(snap);
-    const good = r900.ok && MirrorVision.sameFace(r900, res) < 3;
-    const geo = good ? r900 : res;
-    let canvas = snap;
-    if (!good) { canvas = document.createElement("canvas"); canvas.width = live.proc.width; canvas.height = live.proc.height; canvas.getContext("2d").drawImage(live.proc, 0, 0); }
-    const merged = mergeReadings(live.buf.concat(good ? [r900] : []));
-    const final = Object.assign({}, geo, merged, { ok: true, missing: geo.missing || 0 });
+
+  function confirmLive(c, job) {
+    const slot = st.cur, lastRes = c.reads[c.reads.length - 1];
+    const merged = mergeReadings(c.reads);
+    const final = Object.assign({}, lastRes, merged, { ok: true, missing: lastRes.missing || 0 });
+    delete final.job;
+    const canvas = lastRes.job ? lastRes.job.crop : job.crop;
     Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false });
-    live.buf = [];
-    flash();
+    live.cand = null;
+    beep(); flash();
     toast(`${SLOTS[slot].name} letta`);
     st.cur = nextOpen(slot);
     renderScan();
@@ -3988,7 +4088,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       setPill("ok", "Sei facce lette");
       finishScan();
     } else {
-      $("#liveTip").textContent = `Fatto. ${SLOTS[st.cur].live}`;
+      live.tip = `Fatto. ${SLOTS[st.cur].live}`;
     }
   }
 
