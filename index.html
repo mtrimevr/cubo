@@ -1,0 +1,4156 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calibro per Mirror Cube</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  --paper: #EDF1F4;
+  --sheet: #FAFBFC;
+  --ink: #102234;
+  --graphite: #56697A;
+  --rule: #CFD9E1;
+  --accent: #1570B0;
+  --accent-soft: rgba(21, 112, 176, .14);
+  --accent-ink: #FFFFFF;
+  --signal: #C4343B;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0D1F30; --sheet: #122A3F; --ink: #E3EDF5; --graphite: #8FA6B8; --rule: #203B53;
+    --accent: #4CC3EF; --accent-soft: rgba(76, 195, 239, .16); --accent-ink: #04131D; --signal: #FF7A7A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0D1F30; --sheet: #122A3F; --ink: #E3EDF5; --graphite: #8FA6B8; --rule: #203B53;
+  --accent: #4CC3EF; --accent-soft: rgba(76, 195, 239, .16); --accent-ink: #04131D; --signal: #FF7A7A;
+  color-scheme: dark;
+}
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+*, *::before, *::after { box-sizing: inherit; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 400 16px/1.5 "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.num { font-family: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+
+.app { display: grid; grid-template-columns: minmax(0, 1fr); }
+.stage-wrap { position: relative; background: #000; height: 46vh; height: 46svh; min-height: 280px; overflow: hidden; }
+#stage, #art { position: absolute; inset: 0; width: 100%; height: 100%; }
+#stage { display: block; }
+#art { display: flex; align-items: center; justify-content: center; padding: 48px 16px 20px; }
+#art svg { width: 100%; height: 100%; max-width: 420px; }
+#flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+#flash.go { animation: shutter .3s ease-out; }
+@keyframes shutter { from { opacity: .5; } to { opacity: 0; } }
+.pill {
+  position: absolute; top: 12px; left: 12px; max-width: calc(100% - 24px);
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px;
+  background: rgba(0, 0, 0, .62); color: #F1F6F9; font: 500 14px/1.25 "Barlow", system-ui, sans-serif;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.pill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #7F8E99; }
+.pill[data-s="ok"] i { background: #3EC5F0; }
+.pill[data-s="warn"] i { background: #FF6B6B; }
+.pill[data-s="busy"] i { background: #3EC5F0; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.toast {
+  position: absolute; left: 50%; bottom: 14px; width: max-content; max-width: calc(100% - 28px);
+  transform: translate(-50%, 8px); opacity: 0; pointer-events: none;
+  padding: 8px 14px; border-radius: 8px; background: rgba(0, 0, 0, .74); color: #fff;
+  font: 500 14px/1.3 "Barlow", system-ui, sans-serif; text-align: center; transition: opacity .2s, transform .2s;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) {
+  .toast { transition: none; }
+  #flash.go, .pill[data-s="busy"] i { animation: none; }
+}
+.hero {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 24px; text-align: center; color: #E9F0F4;
+}
+.hero svg { width: 128px; height: auto; margin-bottom: 4px; }
+.hero h1 { margin: 0; font: 600 26px/1.15 "Barlow", system-ui, sans-serif; letter-spacing: -.01em; }
+.hero p { margin: 0; max-width: 32ch; color: #A9B8C3; font-size: 15px; }
+
+
+.panel { padding: 16px 20px 32px; background: var(--paper); }
+.panel-inner { max-width: 620px; }
+.view { display: none; }
+.app[data-phase="scan"] #vScan, .app[data-phase="solve"] #vSolve { display: block; }
+
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 0 0 14px; padding: 0; list-style: none; }
+.steps li { padding-top: 6px; border-top: 3px solid var(--rule); color: var(--graphite); font-size: 13px; line-height: 1.25; }
+.steps li.on { border-top-color: var(--accent); color: var(--ink); font-weight: 600; }
+.steps li.done { border-top-color: var(--accent); }
+.steps.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.hold { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; background: var(--sheet); border: 1px solid var(--rule); }
+.hold img { flex: none; width: 64px; height: 64px; border-radius: 4px; object-fit: cover; }
+.hold p { margin: 0; font-size: 15px; }
+.live-tip {
+  position: absolute; left: 12px; right: 12px; bottom: 14px; display: none;
+  padding: 10px 14px; border-radius: 10px; background: rgba(0, 0, 0, .66); color: #fff;
+  font: 600 17px/1.3 "Barlow", system-ui, sans-serif; text-align: center;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.app[data-live="on"] .live-tip { display: block; }
+.app[data-live="on"] .stage-wrap { height: 64vh; height: 64svh; }
+.app[data-live="on"] .toast { bottom: auto; top: 54px; }
+.only-live { display: none !important; }
+.app[data-live="on"] .only-live { display: grid !important; }
+.app[data-live="on"] .no-live { display: none; }
+.fix { margin: 0 0 14px; padding: 12px; border-radius: 8px; border: 1.5px solid var(--signal); }
+.fix p { margin: 0 0 10px; }
+.fix .actions { margin-top: 0; }
+h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter-spacing: -.005em; }
+.lead { margin: 0 0 14px; max-width: 54ch; color: var(--graphite); }
+.list { margin: 0 0 16px; padding-left: 20px; max-width: 54ch; }
+.list li { margin-bottom: 8px; }
+.mark { font-weight: 600; color: var(--accent); }
+
+.btn {
+  -webkit-appearance: none; appearance: none; min-height: 46px; padding: 10px 16px; border-radius: 8px;
+  border: 1.5px solid var(--ink); background: transparent; color: var(--ink);
+  font: 500 16px/1.2 "Barlow", system-ui, sans-serif; cursor: pointer;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.on-dark { border-color: rgba(233, 240, 244, .75); color: #E9F0F4; }
+.btn.primary.on-dark { background: #3EC5F0; border-color: #3EC5F0; color: #03131C; }
+.btn:focus-visible, .linkbtn:focus-visible, .slot:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0 0; }
+.actions .wide { grid-column: 1 / -1; }
+.linkbtn {
+  padding: 8px 0; border: 0; background: none; color: var(--graphite); cursor: pointer;
+  font: 500 15px/1.2 "Barlow", system-ui, sans-serif; text-decoration: underline; text-underline-offset: 3px;
+}
+.hint { margin: 10px 0 0; max-width: 56ch; color: var(--graphite); font-size: 14px; }
+.note { margin: 12px 0 0; max-width: 56ch; font-size: 14px; }
+.note.warn { color: var(--signal); }
+
+.slots { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.slot {
+  width: 100%; padding: 0; border: 0; background: none; color: var(--graphite); cursor: pointer;
+  font: 500 12px/1.2 "Barlow", system-ui, sans-serif; text-align: center;
+}
+.slot .tile {
+  display: block; aspect-ratio: 1; margin-bottom: 4px; border-radius: 4px; overflow: hidden;
+  border: 1.5px dashed var(--rule); background: var(--sheet);
+}
+.slot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.slot.cur { color: var(--ink); font-weight: 600; }
+.slot.cur .tile { border: 2px solid var(--accent); }
+.slot.done .tile { border: 1.5px solid var(--rule); }
+.slot.bad .tile { border: 2px solid var(--signal); }
+.slot.warnd .tile { border: 2px dashed var(--signal); }
+.slot.warnd { color: var(--signal); }
+.how { display: flex; align-items: center; gap: 14px; margin: 16px 0 0; }
+.how svg { flex: none; width: 104px; height: auto; }
+.how p { margin: 0; }
+.how b { display: block; margin-bottom: 2px; font-weight: 600; }
+
+.result { margin: 18px 0 0; padding: 14px 0 0; border-top: 1px solid var(--rule); }
+.result h3 { margin: 0 0 6px; font: 600 17px/1.25 "Barlow", system-ui, sans-serif; }
+.result p { margin: 0 0 8px; max-width: 56ch; }
+.result svg { width: 180px; height: auto; margin: 4px 0 8px; }
+
+.move-count { margin: 0; color: var(--graphite); font-size: 14px; }
+.move-now { display: flex; align-items: baseline; gap: 16px; margin: 2px 0 0; min-height: 66px; }
+.move-code { font: 600 56px/1 "Barlow Semi Condensed", "Barlow", system-ui, sans-serif; letter-spacing: -.01em; }
+.move-text { font-size: 18px; line-height: 1.3; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 0; padding: 0; list-style: none; }
+.chip {
+  min-width: 42px; min-height: 36px; padding: 4px 8px; border: 1.5px solid var(--rule); border-radius: 6px;
+  background: var(--sheet); color: var(--ink); cursor: pointer;
+  font: 600 16px/1 "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
+}
+.chip.past { color: var(--graphite); background: transparent; }
+.chip.now { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.foot { margin: 28px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); color: var(--graphite); font-size: 13px; }
+.foot .linkbtn { font-size: 14px; }
+
+@media (min-width: 900px) {
+  html, body { height: 100%; }
+  .app { grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr); height: 100%; }
+  .stage-wrap { height: 100%; min-height: 0; }
+  .panel { height: 100%; overflow-y: auto; padding: 28px 32px 40px; }
+}
+</style>
+</head>
+<body>
+<div class="app" data-phase="scan" data-live="off">
+  <div class="stage-wrap">
+    <canvas id="stage" role="img" aria-label="Foto della faccia con la lettura dei tasselli"></canvas>
+    <div id="art" aria-hidden="true"></div>
+    <div id="flash"></div>
+    <div class="pill" id="pill" data-s="idle" role="status" aria-live="polite"><i></i><span id="pillText"></span></div>
+    <div class="live-tip" id="liveTip" aria-live="polite"></div>
+    <div class="toast" id="toast" aria-live="polite"></div>
+  </div>
+
+  <main class="panel">
+    <div class="panel-inner">
+      <ol class="steps two" id="steps">
+        <li>1. Cubo mescolato</li><li>2. Soluzione</li>
+      </ol>
+
+      <section class="view" id="vScan">
+        <h2 id="scanTitle"></h2>
+        <p class="lead" id="scanLead"></p>
+        <ol class="slots" id="slots"></ol>
+        <div class="how" id="how"></div>
+        <div class="actions no-live">
+          <button class="btn primary wide" type="button" data-act="live">Scansione dal vivo</button>
+          <button class="btn" type="button" data-act="video">Registra un video</button>
+          <button class="btn" type="button" data-act="shot" id="btnShot">Scatta foto</button>
+          <button class="btn wide" type="button" data-act="file">Carica foto o video</button>
+        </div>
+        <div class="actions only-live">
+          <button class="btn" type="button" data-act="torch" id="btnTorch" hidden>Luce</button>
+          <button class="btn" type="button" data-act="stoplive">Ferma</button>
+        </div>
+        <p class="hint"><b>Dal vivo:</b> inquadri il cubo e ti guido io. Quando una faccia è letta te lo confermo e passo alla successiva: davanti, poi giri verso sinistra tre volte, poi inclini verso di te e lontano da te. Su claude.ai, nell'app o in Safari, la fotocamera dal vivo è bloccata: funziona se apri la pagina da un sito tuo. Altrimenti usa il video.</p>
+        <p class="hint"><b>Con il video:</b> attiva il flash, tieni il telefono a circa 30 cm e fermati un secondo su ogni faccia. Davanti, poi gira il cubo verso sinistra tre volte (destra, dietro, sinistra). Torna davanti e inclinalo verso di te (sopra), torna davanti e inclinalo lontano da te (sotto). Le facce le trovo io. Se il pulsante non apre la fotocamera, registra con l'app Fotocamera e poi usa «Carica foto o video».</p>
+        <p class="hint">Telefono parallelo alla faccia, a circa 30 cm e senza zoom, con tutta la faccia nella foto e un po' di margine intorno.</p>
+
+        <div id="scanResult"></div>
+      </section>
+
+      <section class="view" id="vSolve">
+        <div id="fixBox"></div>
+        <div class="hold" id="hold"></div>
+        <p class="move-count num" id="moveCount"></p>
+        <div class="move-now"><span class="move-code" id="moveCode"></span><span class="move-text" id="moveText"></span></div>
+        <div class="actions">
+          <button class="btn" type="button" id="btnPrev">Indietro</button>
+          <button class="btn primary" type="button" id="btnNext">Avanti</button>
+        </div>
+        <ol class="chips" id="chips"></ol>
+        <p class="hint">Non girare il cubo in mano tra una mossa e l'altra: i centri restano fermi e le mosse contano su questo.</p>
+        <p class="note" id="solveNote"></p>
+        <div class="actions">
+          <button class="btn" type="button" data-act="back">Torna alle foto</button>
+          <button class="btn" type="button" data-act="rescan">Nuova mescolata</button>
+        </div>
+      </section>
+
+      <div class="foot">
+        <p>Misure del tuo cubo, prese dalle sei foto che mi hai mandato: strati esterni di 16,8 e 49,6, 22,7 e 43,7, 29,4 e 36,9 per cento del lato. Quale faccia è quale lo capisco dalle foto: i centri stanno ad altezze diverse e da vicino si vede.</p>
+      </div>
+      <input id="shot" class="sr-only" type="file" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+      <input id="file" class="sr-only" type="file" accept="image/*,video/*" multiple tabindex="-1" aria-hidden="true">
+      <input id="vid" class="sr-only" type="file" accept="video/*" capture="environment" tabindex="-1" aria-hidden="true">
+    </div>
+  </main>
+</div>
+
+<script>
+/* cube.js 1.3.2 (Kociemba two-phase solver), https://github.com/ldez/cubejs
+Copyright (c) 2013-2017 Petri Lehtinen <petri@digip.org>
+Copyright (c) 2018 Ludovic Fernandez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+(function() {
+  // Centers
+  var B, BL, BR, Cube, D, DB, DBL, DF, DFR, DL, DLF, DR, DRB, F, FL, FR, L, R, U, UB, UBR, UF, UFL, UL, ULB, UR, URF, centerColor, centerFacelet, cornerColor, cornerFacelet, edgeColor, edgeFacelet;
+
+  [U, R, F, D, L, B] = [0, 1, 2, 3, 4, 5];
+
+  // Corners
+  [URF, UFL, ULB, UBR, DFR, DLF, DBL, DRB] = [0, 1, 2, 3, 4, 5, 6, 7];
+
+  // Edges
+  [UR, UF, UL, UB, DR, DF, DL, DB, FR, FL, BL, BR] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+  [centerFacelet, cornerFacelet, edgeFacelet] = (function() {
+    var _B, _D, _F, _L, _R, _U;
+    _U = function(x) {
+      return x - 1;
+    };
+    _R = function(x) {
+      return _U(9) + x;
+    };
+    _F = function(x) {
+      return _R(9) + x;
+    };
+    _D = function(x) {
+      return _F(9) + x;
+    };
+    _L = function(x) {
+      return _D(9) + x;
+    };
+    _B = function(x) {
+      return _L(9) + x;
+    };
+    return [
+      // Centers
+      [4,
+      13,
+      22,
+      31,
+      40,
+      49],
+      // Corners
+      [[_U(9),
+      _R(1),
+      _F(3)],
+      [_U(7),
+      _F(1),
+      _L(3)],
+      [_U(1),
+      _L(1),
+      _B(3)],
+      [_U(3),
+      _B(1),
+      _R(3)],
+      [_D(3),
+      _F(9),
+      _R(7)],
+      [_D(1),
+      _L(9),
+      _F(7)],
+      [_D(7),
+      _B(9),
+      _L(7)],
+      [_D(9),
+      _R(9),
+      _B(7)]],
+      // Edges
+      [[_U(6),
+      _R(2)],
+      [_U(8),
+      _F(2)],
+      [_U(4),
+      _L(2)],
+      [_U(2),
+      _B(2)],
+      [_D(6),
+      _R(8)],
+      [_D(2),
+      _F(8)],
+      [_D(4),
+      _L(8)],
+      [_D(8),
+      _B(8)],
+      [_F(6),
+      _R(4)],
+      [_F(4),
+      _L(6)],
+      [_B(6),
+      _L(4)],
+      [_B(4),
+      _R(6)]]
+    ];
+  })();
+
+  centerColor = ['U', 'R', 'F', 'D', 'L', 'B'];
+
+  cornerColor = [['U', 'R', 'F'], ['U', 'F', 'L'], ['U', 'L', 'B'], ['U', 'B', 'R'], ['D', 'F', 'R'], ['D', 'L', 'F'], ['D', 'B', 'L'], ['D', 'R', 'B']];
+
+  edgeColor = [['U', 'R'], ['U', 'F'], ['U', 'L'], ['U', 'B'], ['D', 'R'], ['D', 'F'], ['D', 'L'], ['D', 'B'], ['F', 'R'], ['F', 'L'], ['B', 'L'], ['B', 'R']];
+
+  Cube = (function() {
+    var faceNames, faceNums, parseAlg;
+
+    class Cube {
+      constructor(other) {
+        var x;
+        if (other != null) {
+          this.init(other);
+        } else {
+          this.identity();
+        }
+        // For moves to avoid allocating new objects each time
+        this.newCenter = (function() {
+          var k, results;
+          results = [];
+          for (x = k = 0; k <= 5; x = ++k) {
+            results.push(0);
+          }
+          return results;
+        })();
+        this.newCp = (function() {
+          var k, results;
+          results = [];
+          for (x = k = 0; k <= 7; x = ++k) {
+            results.push(0);
+          }
+          return results;
+        })();
+        this.newEp = (function() {
+          var k, results;
+          results = [];
+          for (x = k = 0; k <= 11; x = ++k) {
+            results.push(0);
+          }
+          return results;
+        })();
+        this.newCo = (function() {
+          var k, results;
+          results = [];
+          for (x = k = 0; k <= 7; x = ++k) {
+            results.push(0);
+          }
+          return results;
+        })();
+        this.newEo = (function() {
+          var k, results;
+          results = [];
+          for (x = k = 0; k <= 11; x = ++k) {
+            results.push(0);
+          }
+          return results;
+        })();
+      }
+
+      init(state) {
+        this.center = state.center.slice(0);
+        this.co = state.co.slice(0);
+        this.ep = state.ep.slice(0);
+        this.cp = state.cp.slice(0);
+        return this.eo = state.eo.slice(0);
+      }
+
+      identity() {
+        var x;
+        // Initialize to the identity cube
+        this.center = [0, 1, 2, 3, 4, 5];
+        this.cp = [0, 1, 2, 3, 4, 5, 6, 7];
+        this.co = (function() {
+          var k, results;
+          results = [];
+          for (x = k = 0; k <= 7; x = ++k) {
+            results.push(0);
+          }
+          return results;
+        })();
+        this.ep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+        return this.eo = (function() {
+          var k, results;
+          results = [];
+          for (x = k = 0; k <= 11; x = ++k) {
+            results.push(0);
+          }
+          return results;
+        })();
+      }
+
+      toJSON() {
+        return {
+          center: this.center,
+          cp: this.cp,
+          co: this.co,
+          ep: this.ep,
+          eo: this.eo
+        };
+      }
+
+      asString() {
+        var corner, edge, i, k, l, m, n, o, ori, p, result;
+        result = [];
+        for (i = k = 0; k <= 5; i = ++k) {
+          result[9 * i + 4] = centerColor[this.center[i]];
+        }
+        for (i = l = 0; l <= 7; i = ++l) {
+          corner = this.cp[i];
+          ori = this.co[i];
+          for (n = m = 0; m <= 2; n = ++m) {
+            result[cornerFacelet[i][(n + ori) % 3]] = cornerColor[corner][n];
+          }
+        }
+        for (i = o = 0; o <= 11; i = ++o) {
+          edge = this.ep[i];
+          ori = this.eo[i];
+          for (n = p = 0; p <= 1; n = ++p) {
+            result[edgeFacelet[i][(n + ori) % 2]] = edgeColor[edge][n];
+          }
+        }
+        return result.join('');
+      }
+
+      static fromString(str) {
+        var col1, col2, cube, i, j, k, l, m, o, ori, p, q, r, ref;
+        cube = new Cube;
+        for (i = k = 0; k <= 5; i = ++k) {
+          for (j = l = 0; l <= 5; j = ++l) {
+            if (str[9 * i + 4] === centerColor[j]) {
+              cube.center[i] = j;
+            }
+          }
+        }
+        for (i = m = 0; m <= 7; i = ++m) {
+          for (ori = o = 0; o <= 2; ori = ++o) {
+            if ((ref = str[cornerFacelet[i][ori]]) === 'U' || ref === 'D') {
+              break;
+            }
+          }
+          col1 = str[cornerFacelet[i][(ori + 1) % 3]];
+          col2 = str[cornerFacelet[i][(ori + 2) % 3]];
+          for (j = p = 0; p <= 7; j = ++p) {
+            if (col1 === cornerColor[j][1] && col2 === cornerColor[j][2]) {
+              cube.cp[i] = j;
+              cube.co[i] = ori % 3;
+            }
+          }
+        }
+        for (i = q = 0; q <= 11; i = ++q) {
+          for (j = r = 0; r <= 11; j = ++r) {
+            if (str[edgeFacelet[i][0]] === edgeColor[j][0] && str[edgeFacelet[i][1]] === edgeColor[j][1]) {
+              cube.ep[i] = j;
+              cube.eo[i] = 0;
+              break;
+            }
+            if (str[edgeFacelet[i][0]] === edgeColor[j][1] && str[edgeFacelet[i][1]] === edgeColor[j][0]) {
+              cube.ep[i] = j;
+              cube.eo[i] = 1;
+              break;
+            }
+          }
+        }
+        return cube;
+      }
+
+      clone() {
+        return new Cube(this.toJSON());
+      }
+
+      // A class method returning a new random cube
+      static random() {
+        return new Cube().randomize();
+      }
+
+      isSolved() {
+        var c, cent, clone, e, k, l, m;
+        clone = this.clone();
+        clone.move(clone.upright());
+        for (cent = k = 0; k <= 5; cent = ++k) {
+          if (clone.center[cent] !== cent) {
+            return false;
+          }
+        }
+        for (c = l = 0; l <= 7; c = ++l) {
+          if (clone.cp[c] !== c) {
+            return false;
+          }
+          if (clone.co[c] !== 0) {
+            return false;
+          }
+        }
+        for (e = m = 0; m <= 11; e = ++m) {
+          if (clone.ep[e] !== e) {
+            return false;
+          }
+          if (clone.eo[e] !== 0) {
+            return false;
+          }
+        }
+        return true;
+      }
+
+      // Multiply this Cube with another Cube, restricted to centers.
+      centerMultiply(other) {
+        var from, k, to;
+        for (to = k = 0; k <= 5; to = ++k) {
+          from = other.center[to];
+          this.newCenter[to] = this.center[from];
+        }
+        [this.center, this.newCenter] = [this.newCenter, this.center];
+        return this;
+      }
+
+      // Multiply this Cube with another Cube, restricted to corners.
+      cornerMultiply(other) {
+        var from, k, to;
+        for (to = k = 0; k <= 7; to = ++k) {
+          from = other.cp[to];
+          this.newCp[to] = this.cp[from];
+          this.newCo[to] = (this.co[from] + other.co[to]) % 3;
+        }
+        [this.cp, this.newCp] = [this.newCp, this.cp];
+        [this.co, this.newCo] = [this.newCo, this.co];
+        return this;
+      }
+
+      // Multiply this Cube with another Cube, restricted to edges
+      edgeMultiply(other) {
+        var from, k, to;
+        for (to = k = 0; k <= 11; to = ++k) {
+          from = other.ep[to];
+          this.newEp[to] = this.ep[from];
+          this.newEo[to] = (this.eo[from] + other.eo[to]) % 2;
+        }
+        [this.ep, this.newEp] = [this.newEp, this.ep];
+        [this.eo, this.newEo] = [this.newEo, this.eo];
+        return this;
+      }
+
+      // Multiply this cube with another Cube
+      multiply(other) {
+        this.centerMultiply(other);
+        this.cornerMultiply(other);
+        this.edgeMultiply(other);
+        return this;
+      }
+
+      move(arg) {
+        var face, k, l, len, move, power, ref, ref1, x;
+        ref = parseAlg(arg);
+        for (k = 0, len = ref.length; k < len; k++) {
+          move = ref[k];
+          face = move / 3 | 0;
+          power = move % 3;
+          for (x = l = 0, ref1 = power; (0 <= ref1 ? l <= ref1 : l >= ref1); x = 0 <= ref1 ? ++l : --l) {
+            this.multiply(Cube.moves[face]);
+          }
+        }
+        return this;
+      }
+
+      upright() {
+        var clone, i, j, k, l, result;
+        clone = this.clone();
+        result = [];
+        for (i = k = 0; k <= 5; i = ++k) {
+          if (clone.center[i] === F) {
+            break;
+          }
+        }
+        switch (i) {
+          case D:
+            result.push("x");
+            break;
+          case U:
+            result.push("x'");
+            break;
+          case B:
+            result.push("x2");
+            break;
+          case R:
+            result.push("y");
+            break;
+          case L:
+            result.push("y'");
+        }
+        if (result.length) {
+          clone.move(result[0]);
+        }
+        for (j = l = 0; l <= 5; j = ++l) {
+          if (clone.center[j] === U) {
+            break;
+          }
+        }
+        switch (j) {
+          case L:
+            result.push("z");
+            break;
+          case R:
+            result.push("z'");
+            break;
+          case D:
+            result.push("z2");
+        }
+        return result.join(' ');
+      }
+
+      static inverse(arg) {
+        var face, k, len, move, power, result, str;
+        result = (function() {
+          var k, len, ref, results;
+          ref = parseAlg(arg);
+          results = [];
+          for (k = 0, len = ref.length; k < len; k++) {
+            move = ref[k];
+            face = move / 3 | 0;
+            power = move % 3;
+            results.push(face * 3 + -(power - 1) + 1);
+          }
+          return results;
+        })();
+        result.reverse();
+        if (typeof arg === 'string') {
+          str = '';
+          for (k = 0, len = result.length; k < len; k++) {
+            move = result[k];
+            face = move / 3 | 0;
+            power = move % 3;
+            str += faceNames[face];
+            if (power === 1) {
+              str += '2';
+            } else if (power === 2) {
+              str += "'";
+            }
+            str += ' ';
+          }
+          return str.substring(0, str.length - 1);
+        } else if (arg.length != null) {
+          return result;
+        } else {
+          return result[0];
+        }
+      }
+
+    };
+
+    Cube.prototype.randomize = (function() {
+      var arePermutationsValid, generateValidRandomOrientation, generateValidRandomPermutation, getNumSwaps, isOrientationValid, randint, randomizeOrientation, result, shuffle;
+      randint = function(min, max) {
+        return min + Math.floor(Math.random() * (max - min + 1));
+      };
+      // Fisher-Yates shuffle adapted from https://stackoverflow.com/questions/2450954/how-to-randomize-shuffle-a-javascript-array
+      shuffle = function(array) {
+        var currentIndex, randomIndex, temporaryValue;
+        currentIndex = array.length;
+        // While there remain elements to shuffle...
+        while (currentIndex !== 0) {
+          // Pick a remaining element...
+          randomIndex = randint(0, currentIndex - 1);
+          currentIndex -= 1;
+          // And swap it with the current element.
+          temporaryValue = array[currentIndex];
+          [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+        }
+      };
+      getNumSwaps = function(arr) {
+        var cur, cycleLength, i, k, numSwaps, ref, seen, x;
+        numSwaps = 0;
+        seen = (function() {
+          var k, ref, results;
+          results = [];
+          for (x = k = 0, ref = arr.length - 1; (0 <= ref ? k <= ref : k >= ref); x = 0 <= ref ? ++k : --k) {
+            results.push(false);
+          }
+          return results;
+        })();
+        while (true) {
+          // We compute the cycle decomposition
+          cur = -1;
+          for (i = k = 0, ref = arr.length - 1; (0 <= ref ? k <= ref : k >= ref); i = 0 <= ref ? ++k : --k) {
+            if (!seen[i]) {
+              cur = i;
+              break;
+            }
+          }
+          if (cur === -1) {
+            break;
+          }
+          cycleLength = 0;
+          while (!seen[cur]) {
+            seen[cur] = true;
+            cycleLength++;
+            cur = arr[cur];
+          }
+          // A cycle is equivalent to cycleLength + 1 swaps
+          numSwaps += cycleLength + 1;
+        }
+        return numSwaps;
+      };
+      arePermutationsValid = function(cp, ep) {
+        var numSwaps;
+        numSwaps = getNumSwaps(ep) + getNumSwaps(cp);
+        return numSwaps % 2 === 0;
+      };
+      generateValidRandomPermutation = function(cp, ep) {
+        // Each shuffle only takes around 12 operations and there's a 50%
+        // chance of a valid permutation so it'll finish in very good time
+        shuffle(ep);
+        shuffle(cp);
+        while (!arePermutationsValid(cp, ep)) {
+          shuffle(ep);
+          shuffle(cp);
+        }
+      };
+      randomizeOrientation = function(arr, numOrientations) {
+        var i, k, ori, ref;
+        ori = 0;
+        for (i = k = 0, ref = arr.length - 1; (0 <= ref ? k <= ref : k >= ref); i = 0 <= ref ? ++k : --k) {
+          ori += (arr[i] = randint(0, numOrientations - 1));
+        }
+      };
+      isOrientationValid = function(arr, numOrientations) {
+        return arr.reduce(function(a, b) {
+          return a + b;
+        }) % numOrientations === 0;
+      };
+      generateValidRandomOrientation = function(co, eo) {
+        // There is a 1/2 and 1/3 probably respectively of each of these
+        // succeeding so the probability of them running 10 times before
+        // success is already only 1% and only gets exponentially lower
+        // and each generation is only in the 10s of operations which is nothing
+        randomizeOrientation(co, 3);
+        while (!isOrientationValid(co, 3)) {
+          randomizeOrientation(co, 3);
+        }
+        randomizeOrientation(eo, 2);
+        while (!isOrientationValid(eo, 2)) {
+          randomizeOrientation(eo, 2);
+        }
+      };
+      result = function() {
+        generateValidRandomPermutation(this.cp, this.ep);
+        generateValidRandomOrientation(this.co, this.eo);
+        return this;
+      };
+      return result;
+    })();
+
+    Cube.moves = [
+      {
+        // U
+        center: [0, 1, 2, 3, 4, 5],
+        cp: [UBR,
+      URF,
+      UFL,
+      ULB,
+      DFR,
+      DLF,
+      DBL,
+      DRB],
+        co: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0],
+        ep: [UB,
+      UR,
+      UF,
+      UL,
+      DR,
+      DF,
+      DL,
+      DB,
+      FR,
+      FL,
+      BL,
+      BR],
+        eo: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0]
+      },
+      {
+        // R
+        center: [0, 1, 2, 3, 4, 5],
+        cp: [DFR,
+      UFL,
+      ULB,
+      URF,
+      DRB,
+      DLF,
+      DBL,
+      UBR],
+        co: [2,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0,
+      2],
+        ep: [FR,
+      UF,
+      UL,
+      UB,
+      BR,
+      DF,
+      DL,
+      DB,
+      DR,
+      FL,
+      BL,
+      UR],
+        eo: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0]
+      },
+      {
+        // F
+        center: [0, 1, 2, 3, 4, 5],
+        cp: [UFL,
+      DLF,
+      ULB,
+      UBR,
+      URF,
+      DFR,
+      DBL,
+      DRB],
+        co: [1,
+      2,
+      0,
+      0,
+      2,
+      1,
+      0,
+      0],
+        ep: [UR,
+      FL,
+      UL,
+      UB,
+      DR,
+      FR,
+      DL,
+      DB,
+      UF,
+      DF,
+      BL,
+      BR],
+        eo: [0,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0]
+      },
+      {
+        // D
+        center: [0, 1, 2, 3, 4, 5],
+        cp: [URF,
+      UFL,
+      ULB,
+      UBR,
+      DLF,
+      DBL,
+      DRB,
+      DFR],
+        co: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0],
+        ep: [UR,
+      UF,
+      UL,
+      UB,
+      DF,
+      DL,
+      DB,
+      DR,
+      FR,
+      FL,
+      BL,
+      BR],
+        eo: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0]
+      },
+      {
+        // L
+        center: [0, 1, 2, 3, 4, 5],
+        cp: [URF,
+      ULB,
+      DBL,
+      UBR,
+      DFR,
+      UFL,
+      DLF,
+      DRB],
+        co: [0,
+      1,
+      2,
+      0,
+      0,
+      2,
+      1,
+      0],
+        ep: [UR,
+      UF,
+      BL,
+      UB,
+      DR,
+      DF,
+      FL,
+      DB,
+      FR,
+      UL,
+      DL,
+      BR],
+        eo: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0]
+      },
+      {
+        // B
+        center: [0, 1, 2, 3, 4, 5],
+        cp: [URF,
+      UFL,
+      UBR,
+      DRB,
+      DFR,
+      DLF,
+      ULB,
+      DBL],
+        co: [0,
+      0,
+      1,
+      2,
+      0,
+      0,
+      2,
+      1],
+        ep: [UR,
+      UF,
+      UL,
+      BR,
+      DR,
+      DF,
+      DL,
+      BL,
+      FR,
+      FL,
+      UB,
+      DB],
+        eo: [0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      1]
+      },
+      {
+        // E
+        center: [U,
+      F,
+      L,
+      D,
+      B,
+      R],
+        cp: [URF,
+      UFL,
+      ULB,
+      UBR,
+      DFR,
+      DLF,
+      DBL,
+      DRB],
+        co: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0],
+        ep: [UR,
+      UF,
+      UL,
+      UB,
+      DR,
+      DF,
+      DL,
+      DB,
+      FL,
+      BL,
+      BR,
+      FR],
+        eo: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1]
+      },
+      {
+        // M
+        center: [B,
+      R,
+      U,
+      F,
+      L,
+      D],
+        cp: [URF,
+      UFL,
+      ULB,
+      UBR,
+      DFR,
+      DLF,
+      DBL,
+      DRB],
+        co: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0],
+        ep: [UR,
+      UB,
+      UL,
+      DB,
+      DR,
+      UF,
+      DL,
+      DF,
+      FR,
+      FL,
+      BL,
+      BR],
+        eo: [0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0]
+      },
+      {
+        // S
+        center: [L,
+      U,
+      F,
+      R,
+      D,
+      B],
+        cp: [URF,
+      UFL,
+      ULB,
+      UBR,
+      DFR,
+      DLF,
+      DBL,
+      DRB],
+        co: [0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0],
+        ep: [UL,
+      UF,
+      DL,
+      UB,
+      UR,
+      DF,
+      DR,
+      DB,
+      FR,
+      FL,
+      BL,
+      BR],
+        eo: [1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0]
+      }
+    ];
+
+    faceNums = {
+      U: 0,
+      R: 1,
+      F: 2,
+      D: 3,
+      L: 4,
+      B: 5,
+      E: 6,
+      M: 7,
+      S: 8,
+      x: 9,
+      y: 10,
+      z: 11,
+      u: 12,
+      r: 13,
+      f: 14,
+      d: 15,
+      l: 16,
+      b: 17
+    };
+
+    faceNames = {
+      0: 'U',
+      1: 'R',
+      2: 'F',
+      3: 'D',
+      4: 'L',
+      5: 'B',
+      6: 'E',
+      7: 'M',
+      8: 'S',
+      9: 'x',
+      10: 'y',
+      11: 'z',
+      12: 'u',
+      13: 'r',
+      14: 'f',
+      15: 'd',
+      16: 'l',
+      17: 'b'
+    };
+
+    parseAlg = function(arg) {
+      var k, len, move, part, power, ref, results;
+      if (typeof arg === 'string') {
+        ref = arg.split(/\s+/);
+        // String
+        results = [];
+        for (k = 0, len = ref.length; k < len; k++) {
+          part = ref[k];
+          if (part.length === 0) {
+            // First and last can be empty
+            continue;
+          }
+          if (part.length > 2) {
+            throw new Error(`Invalid move: ${part}`);
+          }
+          move = faceNums[part[0]];
+          if (move === void 0) {
+            throw new Error(`Invalid move: ${part}`);
+          }
+          if (part.length === 1) {
+            power = 0;
+          } else {
+            if (part[1] === '2') {
+              power = 1;
+            } else if (part[1] === "'") {
+              power = 2;
+            } else {
+              throw new Error(`Invalid move: ${part}`);
+            }
+          }
+          results.push(move * 3 + power);
+        }
+        return results;
+      } else if (arg.length != null) {
+        // Already an array
+        return arg;
+      } else {
+        // A single move
+        return [arg];
+      }
+    };
+
+    // x
+    Cube.moves.push(new Cube().move("R M' L'").toJSON());
+
+    // y
+    Cube.moves.push(new Cube().move("U E' D'").toJSON());
+
+    // z
+    Cube.moves.push(new Cube().move("F S B'").toJSON());
+
+    // u
+    Cube.moves.push(new Cube().move("U E'").toJSON());
+
+    // r
+    Cube.moves.push(new Cube().move("R M'").toJSON());
+
+    // f
+    Cube.moves.push(new Cube().move("F S").toJSON());
+
+    // d
+    Cube.moves.push(new Cube().move("D E").toJSON());
+
+    // l
+    Cube.moves.push(new Cube().move("L M").toJSON());
+
+    // b
+    Cube.moves.push(new Cube().move("B S'").toJSON());
+
+    return Cube;
+
+  }).call(this);
+
+  //# Globals
+  if (typeof module !== "undefined" && module !== null) {
+    module.exports = Cube;
+  } else {
+    this.Cube = Cube;
+  }
+
+}).call(this);
+
+(function() {
+  var B, BL, BR, Cnk, Cube, D, DB, DBL, DF, DFR, DL, DLF, DR, DRB, F, FL, FR, Include, L, N_FLIP, N_FRtoBR, N_PARITY, N_SLICE1, N_SLICE2, N_TWIST, N_UBtoDF, N_URFtoDLF, N_URtoDF, N_URtoUL, R, U, UB, UBR, UF, UFL, UL, ULB, UR, URF, allMoves1, allMoves2, computeMoveTable, computePruningTable, faceNames, faceNums, factorial, key, max, mergeURtoDF, moveTableParams, nextMoves1, nextMoves2, permutationIndex, pruning, pruningTableParams, rotateLeft, rotateRight, value,
+    indexOf = [].indexOf;
+
+  Cube = this.Cube || require('./cube');
+
+  // Centers
+  [U, R, F, D, L, B] = [0, 1, 2, 3, 4, 5];
+
+  // Corners
+  [URF, UFL, ULB, UBR, DFR, DLF, DBL, DRB] = [0, 1, 2, 3, 4, 5, 6, 7];
+
+  // Edges
+  [UR, UF, UL, UB, DR, DF, DL, DB, FR, FL, BL, BR] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+  //# Helpers
+
+  // n choose k, i.e. the binomial coeffiecient
+  Cnk = function(n, k) {
+    var i, j, s;
+    if (n < k) {
+      return 0;
+    }
+    if (k > n / 2) {
+      k = n - k;
+    }
+    s = 1;
+    i = n;
+    j = 1;
+    while (i !== n - k) {
+      s *= i;
+      s /= j;
+      i--;
+      j++;
+    }
+    return s;
+  };
+
+  // n!
+  factorial = function(n) {
+    var f, i, m, ref;
+    f = 1;
+    for (i = m = 2, ref = n; (2 <= ref ? m <= ref : m >= ref); i = 2 <= ref ? ++m : --m) {
+      f *= i;
+    }
+    return f;
+  };
+
+  // Maximum of two values
+  max = function(a, b) {
+    if (a > b) {
+      return a;
+    } else {
+      return b;
+    }
+  };
+
+  // Rotate elements between l and r left by one place
+  rotateLeft = function(array, l, r) {
+    var i, m, ref, ref1, tmp;
+    tmp = array[l];
+    for (i = m = ref = l, ref1 = r - 1; (ref <= ref1 ? m <= ref1 : m >= ref1); i = ref <= ref1 ? ++m : --m) {
+      array[i] = array[i + 1];
+    }
+    return array[r] = tmp;
+  };
+
+  // Rotate elements between l and r right by one place
+  rotateRight = function(array, l, r) {
+    var i, m, ref, ref1, tmp;
+    tmp = array[r];
+    for (i = m = ref = r, ref1 = l + 1; (ref <= ref1 ? m <= ref1 : m >= ref1); i = ref <= ref1 ? ++m : --m) {
+      array[i] = array[i - 1];
+    }
+    return array[l] = tmp;
+  };
+
+  // Generate a function that computes permutation indices.
+
+  // The permutation index actually encodes two indices: Combination,
+  // i.e. positions of the cubies start..end (A) and their respective
+  // permutation (B). The maximum value for B is
+
+  //   maxB = (end - start + 1)!
+
+  // and the index is A * maxB + B
+  permutationIndex = function(context, start, end, fromEnd = false) {
+    var i, maxAll, maxB, maxOur, our, permName;
+    maxOur = end - start;
+    maxB = factorial(maxOur + 1);
+    if (context === 'corners') {
+      maxAll = 7;
+      permName = 'cp';
+    } else {
+      maxAll = 11;
+      permName = 'ep';
+    }
+    our = (function() {
+      var m, ref, results;
+      results = [];
+      for (i = m = 0, ref = maxOur; (0 <= ref ? m <= ref : m >= ref); i = 0 <= ref ? ++m : --m) {
+        results.push(0);
+      }
+      return results;
+    })();
+    return function(index) {
+      var a, b, c, j, k, m, o, p, perm, q, ref, ref1, ref10, ref2, ref3, ref4, ref5, ref6, ref7, ref8, ref9, t, u, w, x, y, z;
+      if (index != null) {
+        for (i = m = 0, ref = maxOur; (0 <= ref ? m <= ref : m >= ref); i = 0 <= ref ? ++m : --m) {
+          // Reset our to [start..end]
+          our[i] = i + start;
+        }
+        b = index % maxB; // permutation
+        a = index / maxB | 0; // combination
+        
+        // Invalidate all edges
+        perm = this[permName];
+        for (i = o = 0, ref1 = maxAll; (0 <= ref1 ? o <= ref1 : o >= ref1); i = 0 <= ref1 ? ++o : --o) {
+          perm[i] = -1;
+        }
+// Generate permutation from index b
+        for (j = p = 1, ref2 = maxOur; (1 <= ref2 ? p <= ref2 : p >= ref2); j = 1 <= ref2 ? ++p : --p) {
+          k = b % (j + 1);
+          b = b / (j + 1) | 0;
+          // TODO: Implement rotateRightBy(our, 0, j, k)
+          while (k > 0) {
+            rotateRight(our, 0, j);
+            k--;
+          }
+        }
+        // Generate combination and set our edges
+        x = maxOur;
+        if (fromEnd) {
+          for (j = q = 0, ref3 = maxAll; (0 <= ref3 ? q <= ref3 : q >= ref3); j = 0 <= ref3 ? ++q : --q) {
+            c = Cnk(maxAll - j, x + 1);
+            if (a - c >= 0) {
+              perm[j] = our[maxOur - x];
+              a -= c;
+              x--;
+            }
+          }
+        } else {
+          for (j = t = ref4 = maxAll; (ref4 <= 0 ? t <= 0 : t >= 0); j = ref4 <= 0 ? ++t : --t) {
+            c = Cnk(j, x + 1);
+            if (a - c >= 0) {
+              perm[j] = our[x];
+              a -= c;
+              x--;
+            }
+          }
+        }
+        return this;
+      } else {
+        perm = this[permName];
+        for (i = u = 0, ref5 = maxOur; (0 <= ref5 ? u <= ref5 : u >= ref5); i = 0 <= ref5 ? ++u : --u) {
+          our[i] = -1;
+        }
+        a = b = x = 0;
+        // Compute the index a < ((maxAll + 1) choose (maxOur + 1)) and
+        // the permutation
+        if (fromEnd) {
+          for (j = w = ref6 = maxAll; (ref6 <= 0 ? w <= 0 : w >= 0); j = ref6 <= 0 ? ++w : --w) {
+            if ((start <= (ref7 = perm[j]) && ref7 <= end)) {
+              a += Cnk(maxAll - j, x + 1);
+              our[maxOur - x] = perm[j];
+              x++;
+            }
+          }
+        } else {
+          for (j = y = 0, ref8 = maxAll; (0 <= ref8 ? y <= ref8 : y >= ref8); j = 0 <= ref8 ? ++y : --y) {
+            if ((start <= (ref9 = perm[j]) && ref9 <= end)) {
+              a += Cnk(j, x + 1);
+              our[x] = perm[j];
+              x++;
+            }
+          }
+        }
+// Compute the index b < (maxOur + 1)! for the permutation
+        for (j = z = ref10 = maxOur; (ref10 <= 0 ? z <= 0 : z >= 0); j = ref10 <= 0 ? ++z : --z) {
+          k = 0;
+          while (our[j] !== start + j) {
+            rotateLeft(our, 0, j);
+            k++;
+          }
+          b = (j + 1) * b + k;
+        }
+        return a * maxB + b;
+      }
+    };
+  };
+
+  Include = {
+    // The twist of the 8 corners, 0 <= twist < 3^7. The orientation of
+    // the DRB corner is fully determined by the orientation of the other
+    // corners.
+    twist: function(twist) {
+      var i, m, o, ori, parity, v;
+      if (twist != null) {
+        parity = 0;
+        for (i = m = 6; m >= 0; i = --m) {
+          ori = twist % 3;
+          twist = (twist / 3) | 0;
+          this.co[i] = ori;
+          parity += ori;
+        }
+        this.co[7] = (3 - parity % 3) % 3;
+        return this;
+      } else {
+        v = 0;
+        for (i = o = 0; o <= 6; i = ++o) {
+          v = 3 * v + this.co[i];
+        }
+        return v;
+      }
+    },
+    // The flip of the 12 edges, 0 <= flip < 2^11. The orientation of the
+    // BR edge is fully determined by the orientation of the other edges.
+    flip: function(flip) {
+      var i, m, o, ori, parity, v;
+      if (flip != null) {
+        parity = 0;
+        for (i = m = 10; m >= 0; i = --m) {
+          ori = flip % 2;
+          flip = flip / 2 | 0;
+          this.eo[i] = ori;
+          parity += ori;
+        }
+        this.eo[11] = (2 - parity % 2) % 2;
+        return this;
+      } else {
+        v = 0;
+        for (i = o = 0; o <= 10; i = ++o) {
+          v = 2 * v + this.eo[i];
+        }
+        return v;
+      }
+    },
+    // Parity of the corner permutation
+    cornerParity: function() {
+      var i, j, m, o, ref, ref1, ref2, ref3, s;
+      s = 0;
+      for (i = m = ref = DRB, ref1 = URF + 1; (ref <= ref1 ? m <= ref1 : m >= ref1); i = ref <= ref1 ? ++m : --m) {
+        for (j = o = ref2 = i - 1, ref3 = URF; (ref2 <= ref3 ? o <= ref3 : o >= ref3); j = ref2 <= ref3 ? ++o : --o) {
+          if (this.cp[j] > this.cp[i]) {
+            s++;
+          }
+        }
+      }
+      return s % 2;
+    },
+    // Parity of the edges permutation. Parity of corners and edges are
+    // the same if the cube is solvable.
+    edgeParity: function() {
+      var i, j, m, o, ref, ref1, ref2, ref3, s;
+      s = 0;
+      for (i = m = ref = BR, ref1 = UR + 1; (ref <= ref1 ? m <= ref1 : m >= ref1); i = ref <= ref1 ? ++m : --m) {
+        for (j = o = ref2 = i - 1, ref3 = UR; (ref2 <= ref3 ? o <= ref3 : o >= ref3); j = ref2 <= ref3 ? ++o : --o) {
+          if (this.ep[j] > this.ep[i]) {
+            s++;
+          }
+        }
+      }
+      return s % 2;
+    },
+    // Permutation of the six corners URF, UFL, ULB, UBR, DFR, DLF
+    URFtoDLF: permutationIndex('corners', URF, DLF),
+    // Permutation of the three edges UR, UF, UL
+    URtoUL: permutationIndex('edges', UR, UL),
+    // Permutation of the three edges UB, DR, DF
+    UBtoDF: permutationIndex('edges', UB, DF),
+    // Permutation of the six edges UR, UF, UL, UB, DR, DF
+    URtoDF: permutationIndex('edges', UR, DF),
+    // Permutation of the equator slice edges FR, FL, BL and BR
+    FRtoBR: permutationIndex('edges', FR, BR, true)
+  };
+
+  for (key in Include) {
+    value = Include[key];
+    Cube.prototype[key] = value;
+  }
+
+  computeMoveTable = function(context, coord, size) {
+    var apply, cube, i, inner, j, k, m, move, o, p, ref, results;
+    // Loop through all valid values for the coordinate, setting cube's
+    // state in each iteration. Then apply each of the 18 moves to the
+    // cube, and compute the resulting coordinate.
+    apply = context === 'corners' ? 'cornerMultiply' : 'edgeMultiply';
+    cube = new Cube;
+    results = [];
+    for (i = m = 0, ref = size - 1; (0 <= ref ? m <= ref : m >= ref); i = 0 <= ref ? ++m : --m) {
+      cube[coord](i);
+      inner = [];
+      for (j = o = 0; o <= 5; j = ++o) {
+        move = Cube.moves[j];
+        for (k = p = 0; p <= 2; k = ++p) {
+          cube[apply](move);
+          inner.push(cube[coord]());
+        }
+        // 4th face turn restores the cube
+        cube[apply](move);
+      }
+      results.push(inner);
+    }
+    return results;
+  };
+
+  // Because we only have the phase 2 URtoDF coordinates, we need to
+  // merge the URtoUL and UBtoDF coordinates to URtoDF in the beginning
+  // of phase 2.
+  mergeURtoDF = (function() {
+    var a, b;
+    a = new Cube;
+    b = new Cube;
+    return function(URtoUL, UBtoDF) {
+      var i, m;
+      // Collisions can be found because unset are set to -1
+      a.URtoUL(URtoUL);
+      b.UBtoDF(UBtoDF);
+      for (i = m = 0; m <= 7; i = ++m) {
+        if (a.ep[i] !== -1) {
+          if (b.ep[i] !== -1) {
+            return -1; // collision
+          } else {
+            b.ep[i] = a.ep[i];
+          }
+        }
+      }
+      return b.URtoDF();
+    };
+  })();
+
+  N_TWIST = 2187; // 3^7 corner orientations
+
+  N_FLIP = 2048; // 2^11 possible edge flips
+
+  N_PARITY = 2; // 2 possible parities
+
+  N_FRtoBR = 11880; // 12!/(12-4)! permutations of FR..BR edges
+
+  N_SLICE1 = 495; // (12 choose 4) possible positions of FR..BR edges
+
+  N_SLICE2 = 24; // 4! permutations of FR..BR edges in phase 2
+
+  N_URFtoDLF = 20160; // 8!/(8-6)! permutations of URF..DLF corners
+
+  
+  // The URtoDF move table is only computed for phase 2 because the full
+  // table would have >650000 entries
+  N_URtoDF = 20160; // 8!/(8-6)! permutation of UR..DF edges in phase 2
+
+  N_URtoUL = 1320; // 12!/(12-3)! permutations of UR..UL edges
+
+  N_UBtoDF = 1320; // 12!/(12-3)! permutations of UB..DF edges
+
+  
+  // The move table for parity is so small that it's included here
+  Cube.moveTables = {
+    parity: [[1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1], [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]],
+    twist: null,
+    flip: null,
+    FRtoBR: null,
+    URFtoDLF: null,
+    URtoDF: null,
+    URtoUL: null,
+    UBtoDF: null,
+    mergeURtoDF: null
+  };
+
+  // Other move tables are computed on the fly
+  moveTableParams = {
+    // name: [scope, size]
+    twist: ['corners', N_TWIST],
+    flip: ['edges', N_FLIP],
+    FRtoBR: ['edges', N_FRtoBR],
+    URFtoDLF: ['corners', N_URFtoDLF],
+    URtoDF: ['edges', N_URtoDF],
+    URtoUL: ['edges', N_URtoUL],
+    UBtoDF: ['edges', N_UBtoDF],
+    mergeURtoDF: []
+  };
+
+  Cube.computeMoveTables = function(...tables) {
+    var len, m, name, scope, size, tableName;
+    if (tables.length === 0) {
+      tables = (function() {
+        var results;
+        results = [];
+        for (name in moveTableParams) {
+          results.push(name);
+        }
+        return results;
+      })();
+    }
+    for (m = 0, len = tables.length; m < len; m++) {
+      tableName = tables[m];
+      if (this.moveTables[tableName] !== null) {
+        // Already computed
+        continue;
+      }
+      if (tableName === 'mergeURtoDF') {
+        this.moveTables.mergeURtoDF = (function() {
+          var UBtoDF, URtoUL, o, results;
+          results = [];
+          for (URtoUL = o = 0; o <= 335; URtoUL = ++o) {
+            results.push((function() {
+              var p, results1;
+              results1 = [];
+              for (UBtoDF = p = 0; p <= 335; UBtoDF = ++p) {
+                results1.push(mergeURtoDF(URtoUL, UBtoDF));
+              }
+              return results1;
+            })());
+          }
+          return results;
+        })();
+      } else {
+        [scope, size] = moveTableParams[tableName];
+        this.moveTables[tableName] = computeMoveTable(scope, tableName, size);
+      }
+    }
+    return this;
+  };
+
+  // Phase 1: All moves are valid
+  allMoves1 = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+
+  // The list of next valid phase 1 moves when the given face was turned
+  // in the last move
+  nextMoves1 = (function() {
+    var face, lastFace, m, next, o, p, power, results;
+    results = [];
+    for (lastFace = m = 0; m <= 5; lastFace = ++m) {
+      next = [];
+// Don't allow commuting moves, e.g. U U'. Also make sure that
+// opposite faces are always moved in the same order, i.e. allow
+// U D but no D U. This avoids sequences like U D U'.
+      for (face = o = 0; o <= 5; face = ++o) {
+        if (face !== lastFace && face !== lastFace - 3) {
+// single, double or inverse move
+          for (power = p = 0; p <= 2; power = ++p) {
+            next.push(face * 3 + power);
+          }
+        }
+      }
+      results.push(next);
+    }
+    return results;
+  })();
+
+  // Phase 2: Double moves of all faces plus quarter moves of U and D
+  allMoves2 = [0, 1, 2, 4, 7, 9, 10, 11, 13, 16];
+
+  nextMoves2 = (function() {
+    var face, lastFace, len, m, next, o, p, power, powers, results;
+    results = [];
+    for (lastFace = m = 0; m <= 5; lastFace = ++m) {
+      next = [];
+      for (face = o = 0; o <= 5; face = ++o) {
+        if (!(face !== lastFace && face !== lastFace - 3)) {
+          continue;
+        }
+        // Allow all moves of U and D and double moves of others
+        powers = face === 0 || face === 3 ? [0, 1, 2] : [1];
+        for (p = 0, len = powers.length; p < len; p++) {
+          power = powers[p];
+          next.push(face * 3 + power);
+        }
+      }
+      results.push(next);
+    }
+    return results;
+  })();
+
+  // 8 values are encoded in one number
+  pruning = function(table, index, value) {
+    var pos, shift, slot;
+    pos = index % 8;
+    slot = index >> 3;
+    shift = pos << 2;
+    if (value != null) {
+      // Set
+      table[slot] &= ~(0xF << shift);
+      table[slot] |= value << shift;
+      return value;
+    } else {
+      // Get
+      return (table[slot] & (0xF << shift)) >>> shift;
+    }
+  };
+
+  computePruningTable = function(phase, size, currentCoords, nextIndex) {
+    var current, depth, done, index, len, m, move, moves, next, o, ref, table, x;
+    // Initialize all values to 0xF
+    table = (function() {
+      var m, ref, results;
+      results = [];
+      for (x = m = 0, ref = Math.ceil(size / 8) - 1; (0 <= ref ? m <= ref : m >= ref); x = 0 <= ref ? ++m : --m) {
+        results.push(0xFFFFFFFF);
+      }
+      return results;
+    })();
+    if (phase === 1) {
+      moves = allMoves1;
+    } else {
+      moves = allMoves2;
+    }
+    depth = 0;
+    pruning(table, 0, depth);
+    done = 1;
+    // In each iteration, take each state found in the previous depth and
+    // compute the next state. Stop when all states have been assigned a
+    // depth.
+    while (done !== size) {
+      for (index = m = 0, ref = size - 1; (0 <= ref ? m <= ref : m >= ref); index = 0 <= ref ? ++m : --m) {
+        if (!(pruning(table, index) === depth)) {
+          continue;
+        }
+        current = currentCoords(index);
+        for (o = 0, len = moves.length; o < len; o++) {
+          move = moves[o];
+          next = nextIndex(current, move);
+          if (pruning(table, next) === 0xF) {
+            pruning(table, next, depth + 1);
+            done++;
+          }
+        }
+      }
+      depth++;
+    }
+    return table;
+  };
+
+  Cube.pruningTables = {
+    sliceTwist: null,
+    sliceFlip: null,
+    sliceURFtoDLFParity: null,
+    sliceURtoDFParity: null
+  };
+
+  pruningTableParams = {
+    // name: [phase, size, currentCoords, nextIndex]
+    sliceTwist: [
+      1,
+      N_SLICE1 * N_TWIST,
+      function(index) {
+        return [index % N_SLICE1,
+      index / N_SLICE1 | 0];
+      },
+      function(current,
+      move) {
+        var newSlice,
+      newTwist,
+      slice,
+      twist;
+        [slice,
+      twist] = current;
+        newSlice = Cube.moveTables.FRtoBR[slice * 24][move] / 24 | 0;
+        newTwist = Cube.moveTables.twist[twist][move];
+        return newTwist * N_SLICE1 + newSlice;
+      }
+    ],
+    sliceFlip: [
+      1,
+      N_SLICE1 * N_FLIP,
+      function(index) {
+        return [index % N_SLICE1,
+      index / N_SLICE1 | 0];
+      },
+      function(current,
+      move) {
+        var flip,
+      newFlip,
+      newSlice,
+      slice;
+        [slice,
+      flip] = current;
+        newSlice = Cube.moveTables.FRtoBR[slice * 24][move] / 24 | 0;
+        newFlip = Cube.moveTables.flip[flip][move];
+        return newFlip * N_SLICE1 + newSlice;
+      }
+    ],
+    sliceURFtoDLFParity: [
+      2,
+      N_SLICE2 * N_URFtoDLF * N_PARITY,
+      function(index) {
+        return [index % 2,
+      (index / 2 | 0) % N_SLICE2,
+      (index / 2 | 0) / N_SLICE2 | 0];
+      },
+      function(current,
+      move) {
+        var URFtoDLF,
+      newParity,
+      newSlice,
+      newURFtoDLF,
+      parity,
+      slice;
+        [parity,
+      slice,
+      URFtoDLF] = current;
+        newParity = Cube.moveTables.parity[parity][move];
+        newSlice = Cube.moveTables.FRtoBR[slice][move];
+        newURFtoDLF = Cube.moveTables.URFtoDLF[URFtoDLF][move];
+        return (newURFtoDLF * N_SLICE2 + newSlice) * 2 + newParity;
+      }
+    ],
+    sliceURtoDFParity: [
+      2,
+      N_SLICE2 * N_URtoDF * N_PARITY,
+      function(index) {
+        return [index % 2,
+      (index / 2 | 0) % N_SLICE2,
+      (index / 2 | 0) / N_SLICE2 | 0];
+      },
+      function(current,
+      move) {
+        var URtoDF,
+      newParity,
+      newSlice,
+      newURtoDF,
+      parity,
+      slice;
+        [parity,
+      slice,
+      URtoDF] = current;
+        newParity = Cube.moveTables.parity[parity][move];
+        newSlice = Cube.moveTables.FRtoBR[slice][move];
+        newURtoDF = Cube.moveTables.URtoDF[URtoDF][move];
+        return (newURtoDF * N_SLICE2 + newSlice) * 2 + newParity;
+      }
+    ]
+  };
+
+  Cube.computePruningTables = function(...tables) {
+    var len, m, name, params, tableName;
+    if (tables.length === 0) {
+      tables = (function() {
+        var results;
+        results = [];
+        for (name in pruningTableParams) {
+          results.push(name);
+        }
+        return results;
+      })();
+    }
+    for (m = 0, len = tables.length; m < len; m++) {
+      tableName = tables[m];
+      if (this.pruningTables[tableName] !== null) {
+        // Already computed
+        continue;
+      }
+      params = pruningTableParams[tableName];
+      this.pruningTables[tableName] = computePruningTable(...params);
+    }
+    return this;
+  };
+
+  Cube.initSolver = function() {
+    Cube.computeMoveTables();
+    return Cube.computePruningTables();
+  };
+
+  Cube.prototype.solveUpright = function(maxDepth = 22) {
+    var State, freeStates, moveNames, phase1, phase1search, phase2, phase2search, solution, state, x;
+    // Names for all moves, i.e. U, U2, U', F, F2, ...
+    moveNames = (function() {
+      var face, faceName, m, o, power, powerName, result;
+      faceName = ['U', 'R', 'F', 'D', 'L', 'B'];
+      powerName = ['', '2', "'"];
+      result = [];
+      for (face = m = 0; m <= 5; face = ++m) {
+        for (power = o = 0; o <= 2; power = ++o) {
+          result.push(faceName[face] + powerName[power]);
+        }
+      }
+      return result;
+    })();
+    State = class State {
+      constructor(cube) {
+        this.parent = null;
+        this.lastMove = null;
+        this.depth = 0;
+        if (cube) {
+          this.init(cube);
+        }
+      }
+
+      init(cube) {
+        // Phase 1 coordinates
+        this.flip = cube.flip();
+        this.twist = cube.twist();
+        this.slice = cube.FRtoBR() / N_SLICE2 | 0;
+        // Phase 2 coordinates
+        this.parity = cube.cornerParity();
+        this.URFtoDLF = cube.URFtoDLF();
+        this.FRtoBR = cube.FRtoBR();
+        // These are later merged to URtoDF when phase 2 begins
+        this.URtoUL = cube.URtoUL();
+        this.UBtoDF = cube.UBtoDF();
+        return this;
+      }
+
+      solution() {
+        if (this.parent) {
+          return this.parent.solution() + moveNames[this.lastMove] + ' ';
+        } else {
+          return '';
+        }
+      }
+
+      //# Helpers
+      move(table, index, move) {
+        return Cube.moveTables[table][index][move];
+      }
+
+      pruning(table, index) {
+        return pruning(Cube.pruningTables[table], index);
+      }
+
+      //# Phase 1
+
+      // Return the next valid phase 1 moves for this state
+      moves1() {
+        if (this.lastMove !== null) {
+          return nextMoves1[this.lastMove / 3 | 0];
+        } else {
+          return allMoves1;
+        }
+      }
+
+      // Compute the minimum number of moves to the end of phase 1
+      minDist1() {
+        var d1, d2;
+        // The maximum number of moves to the end of phase 1 wrt. the
+        // combination flip and slice coordinates only
+        d1 = this.pruning('sliceFlip', N_SLICE1 * this.flip + this.slice);
+        // The combination of twist and slice coordinates
+        d2 = this.pruning('sliceTwist', N_SLICE1 * this.twist + this.slice);
+        // The true minimal distance is the maximum of these two
+        return max(d1, d2);
+      }
+
+      // Compute the next phase 1 state for the given move
+      next1(move) {
+        var next;
+        next = freeStates.pop();
+        next.parent = this;
+        next.lastMove = move;
+        next.depth = this.depth + 1;
+        next.flip = this.move('flip', this.flip, move);
+        next.twist = this.move('twist', this.twist, move);
+        next.slice = this.move('FRtoBR', this.slice * 24, move) / 24 | 0;
+        return next;
+      }
+
+      //# Phase 2
+
+      // Return the next valid phase 2 moves for this state
+      moves2() {
+        if (this.lastMove !== null) {
+          return nextMoves2[this.lastMove / 3 | 0];
+        } else {
+          return allMoves2;
+        }
+      }
+
+      // Compute the minimum number of moves to the solved cube
+      minDist2() {
+        var d1, d2, index1, index2;
+        index1 = (N_SLICE2 * this.URtoDF + this.FRtoBR) * N_PARITY + this.parity;
+        d1 = this.pruning('sliceURtoDFParity', index1);
+        index2 = (N_SLICE2 * this.URFtoDLF + this.FRtoBR) * N_PARITY + this.parity;
+        d2 = this.pruning('sliceURFtoDLFParity', index2);
+        return max(d1, d2);
+      }
+
+      // Initialize phase 2 coordinates
+      init2(top = true) {
+        if (this.parent === null) {
+          return;
+        }
+        // For other states, the phase 2 state is computed based on
+        // parent's state.
+        // Already assigned for the initial state
+        this.parent.init2(false);
+        this.URFtoDLF = this.move('URFtoDLF', this.parent.URFtoDLF, this.lastMove);
+        this.FRtoBR = this.move('FRtoBR', this.parent.FRtoBR, this.lastMove);
+        this.parity = this.move('parity', this.parent.parity, this.lastMove);
+        this.URtoUL = this.move('URtoUL', this.parent.URtoUL, this.lastMove);
+        this.UBtoDF = this.move('UBtoDF', this.parent.UBtoDF, this.lastMove);
+        if (top) {
+          // This is the initial phase 2 state. Get the URtoDF coordinate
+          // by merging URtoUL and UBtoDF
+          return this.URtoDF = this.move('mergeURtoDF', this.URtoUL, this.UBtoDF);
+        }
+      }
+
+      // Compute the next phase 2 state for the given move
+      next2(move) {
+        var next;
+        next = freeStates.pop();
+        next.parent = this;
+        next.lastMove = move;
+        next.depth = this.depth + 1;
+        next.URFtoDLF = this.move('URFtoDLF', this.URFtoDLF, move);
+        next.FRtoBR = this.move('FRtoBR', this.FRtoBR, move);
+        next.parity = this.move('parity', this.parity, move);
+        next.URtoDF = this.move('URtoDF', this.URtoDF, move);
+        return next;
+      }
+
+    };
+    solution = null;
+    phase1search = function(state) {
+      var depth, m, ref, results;
+      depth = 0;
+      results = [];
+      for (depth = m = 1, ref = maxDepth; (1 <= ref ? m <= ref : m >= ref); depth = 1 <= ref ? ++m : --m) {
+        phase1(state, depth);
+        if (solution !== null) {
+          break;
+        }
+        results.push(depth++);
+      }
+      return results;
+    };
+    phase1 = function(state, depth) {
+      var len, m, move, next, ref, ref1, results;
+      if (depth === 0) {
+        if (state.minDist1() === 0) {
+          // Make sure we don't start phase 2 with a phase 2 move as the
+          // last move in phase 1, because phase 2 would then repeat the
+          // same move.
+          if (state.lastMove === null || (ref = state.lastMove, indexOf.call(allMoves2, ref) < 0)) {
+            return phase2search(state);
+          }
+        }
+      } else if (depth > 0) {
+        if (state.minDist1() <= depth) {
+          ref1 = state.moves1();
+          results = [];
+          for (m = 0, len = ref1.length; m < len; m++) {
+            move = ref1[m];
+            next = state.next1(move);
+            phase1(next, depth - 1);
+            freeStates.push(next);
+            if (solution !== null) {
+              break;
+            } else {
+              results.push(void 0);
+            }
+          }
+          return results;
+        }
+      }
+    };
+    phase2search = function(state) {
+      var depth, m, ref, results;
+      // Initialize phase 2 coordinates
+      state.init2();
+      results = [];
+      for (depth = m = 1, ref = maxDepth - state.depth; (1 <= ref ? m <= ref : m >= ref); depth = 1 <= ref ? ++m : --m) {
+        phase2(state, depth);
+        if (solution !== null) {
+          break;
+        }
+        results.push(depth++);
+      }
+      return results;
+    };
+    phase2 = function(state, depth) {
+      var len, m, move, next, ref, results;
+      if (depth === 0) {
+        if (state.minDist2() === 0) {
+          return solution = state.solution();
+        }
+      } else if (depth > 0) {
+        if (state.minDist2() <= depth) {
+          ref = state.moves2();
+          results = [];
+          for (m = 0, len = ref.length; m < len; m++) {
+            move = ref[m];
+            next = state.next2(move);
+            phase2(next, depth - 1);
+            freeStates.push(next);
+            if (solution !== null) {
+              break;
+            } else {
+              results.push(void 0);
+            }
+          }
+          return results;
+        }
+      }
+    };
+    freeStates = (function() {
+      var m, ref, results;
+      results = [];
+      for (x = m = 0, ref = maxDepth + 1; (0 <= ref ? m <= ref : m >= ref); x = 0 <= ref ? ++m : --m) {
+        results.push(new State);
+      }
+      return results;
+    })();
+    state = freeStates.pop().init(this);
+    phase1search(state);
+    freeStates.push(state);
+    // Trim the trailing space
+    if (solution.length > 0) {
+      solution = solution.substring(0, solution.length - 1);
+    }
+    return solution;
+  };
+
+  faceNums = {
+    U: 0,
+    R: 1,
+    F: 2,
+    D: 3,
+    L: 4,
+    B: 5
+  };
+
+  faceNames = {
+    0: 'U',
+    1: 'R',
+    2: 'F',
+    3: 'D',
+    4: 'L',
+    5: 'B'
+  };
+
+  Cube.prototype.solve = function(maxDepth = 22) {
+    var clone, len, m, move, ref, rotation, solution, upright, uprightSolution;
+    clone = this.clone();
+    upright = clone.upright();
+    clone.move(upright);
+    rotation = new Cube().move(upright).center;
+    uprightSolution = clone.solveUpright(maxDepth);
+    solution = [];
+    ref = uprightSolution.split(' ');
+    for (m = 0, len = ref.length; m < len; m++) {
+      move = ref[m];
+      solution.push(faceNames[rotation[faceNums[move[0]]]]);
+      if (move.length > 1) {
+        solution[solution.length - 1] += move[1];
+      }
+    }
+    return solution.join(' ');
+  };
+
+  Cube.scramble = function() {
+    return Cube.inverse(Cube.random().solve());
+  };
+
+}).call(this);
+
+</script>
+<script>
+// Mirror cube face analyzer: finds the black groove grid on one face
+// and measures the three layer widths along both face axes.
+// Pure JS, no dependencies. Input: RGBA bytes, width, height.
+const MirrorVision = (() => {
+  "use strict";
+
+  // Gold mask that adapts to the light: warm indoor light turns the gold orange (hue ~34),
+  // daylight keeps it yellow (hue ~46). Find this photo's gold hue first, then keep a
+  // window around it. Skin (hue < 22) and pale tables (low saturation) stay out.
+  function masks(img, W, H) {
+    const N = W * H;
+    const gold = new Uint8Array(N), bright = new Uint8Array(N), val = new Float32Array(N);
+    const hue = new Float32Array(N), sat = new Float32Array(N);
+    const hist = new Float32Array(90);
+    for (let i = 0, p = 0; i < N; i++, p += 4) {
+      const r = img[p], g = img[p + 1], b = img[p + 2];
+      let mx = r, mn = r;
+      if (g > mx) mx = g; if (b > mx) mx = b;
+      if (g < mn) mn = g; if (b < mn) mn = b;
+      const v = mx / 255;
+      val[i] = v;
+      if (v > 0.9 && mn > 150) bright[i] = 1;
+      const d = mx - mn;
+      if (d === 0) { hue[i] = -1; continue; }
+      let h;
+      if (mx === r) h = 60 * ((g - b) / d);
+      else if (mx === g) h = 60 * ((b - r) / d + 2);
+      else h = 60 * ((r - g) / d + 4);
+      if (h < 0) h += 360;
+      const sv = d / mx;
+      hue[i] = h; sat[i] = sv;
+      if (sv >= 0.38 && v >= 0.25 && h >= 22 && h < 66) hist[h | 0] += sv;
+    }
+    let h0 = 44, best = -1;
+    for (let k = 22; k < 66; k++) {
+      let acc = 0;
+      for (let j = -3; j <= 3; j++) acc += hist[k + j] || 0;
+      if (acc > best) { best = acc; h0 = k + 0.5; }
+    }
+    const lo = Math.max(20, h0 - 11), hi = Math.min(68, h0 + 11);
+    // Typical saturation of this photo's gold (well-lit pixels): shadows on a warm table
+    // share the hue but are far less saturated, so the cut is relative to the gold itself.
+    const sh = new Uint32Array(101);
+    let cnt = 0;
+    for (let i = 0; i < N; i++) {
+      const h = hue[i];
+      if (h >= lo && h <= hi && val[i] >= 0.5 && sat[i] >= 0.35) { sh[Math.min(100, Math.round(sat[i] * 100))]++; cnt++; }
+    }
+    let smed = 0.6;
+    for (let k = 0, acc = 0; k <= 100 && cnt; k++) { acc += sh[k]; if (acc >= cnt / 2) { smed = k / 100; break; } }
+    const sThr = Math.min(0.62, Math.max(0.35, 0.72 * smed));
+    for (let i = 0; i < N; i++) {
+      const h = hue[i], sv = sat[i], v = val[i];
+      if (h >= lo && h <= hi && v >= 0.25 && (sv >= sThr || (sv >= 0.35 && v >= 0.75))) gold[i] = 1;
+    }
+    return { gold, bright, val, h0, sThr };
+  }
+
+  // Separable square max filter (dilate) or min filter (erode) on a binary mask.
+  function morph(src, W, H, R, erode) {
+    const tmp = new Uint8Array(W * H);
+    const out = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) {
+      const row = y * W;
+      let cnt = 0;
+      for (let x = 0; x <= Math.min(R, W - 1); x++) cnt += src[row + x];
+      for (let x = 0; x < W; x++) {
+        const lo = Math.max(0, x - R), hi = Math.min(W - 1, x + R);
+        tmp[row + x] = erode ? (cnt === hi - lo + 1 ? 1 : 0) : (cnt > 0 ? 1 : 0);
+        if (x + R + 1 < W) cnt += src[row + x + R + 1];
+        if (x - R >= 0) cnt -= src[row + x - R];
+      }
+    }
+    for (let x = 0; x < W; x++) {
+      let cnt = 0;
+      for (let y = 0; y <= Math.min(R, H - 1); y++) cnt += tmp[y * W + x];
+      for (let y = 0; y < H; y++) {
+        const lo = Math.max(0, y - R), hi = Math.min(H - 1, y + R);
+        out[y * W + x] = erode ? (cnt === hi - lo + 1 ? 1 : 0) : (cnt > 0 ? 1 : 0);
+        if (y + R + 1 < H) cnt += tmp[(y + R + 1) * W + x];
+        if (y - R >= 0) cnt -= tmp[(y - R) * W + x];
+      }
+    }
+    return out;
+  }
+
+  function components(mask, W, H) {
+    const labels = new Int32Array(W * H);
+    const comps = [null];
+    const stack = new Int32Array(W * H);
+    let next = 1;
+    for (let s = 0; s < W * H; s++) {
+      if (!mask[s] || labels[s]) continue;
+      let sp = 0, area = 0;
+      let x0 = W, y0 = H, x1 = -1, y1 = -1;
+      stack[sp++] = s; labels[s] = next;
+      while (sp) {
+        const i = stack[--sp];
+        const x = i % W, y = (i / W) | 0;
+        area++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (x > 0 && mask[i - 1] && !labels[i - 1]) { labels[i - 1] = next; stack[sp++] = i - 1; }
+        if (x < W - 1 && mask[i + 1] && !labels[i + 1]) { labels[i + 1] = next; stack[sp++] = i + 1; }
+        if (y > 0 && mask[i - W] && !labels[i - W]) { labels[i - W] = next; stack[sp++] = i - W; }
+        if (y < H - 1 && mask[i + W] && !labels[i + W]) { labels[i + W] = next; stack[sp++] = i + W; }
+      }
+      comps.push({ area, x0, y0, x1, y1 });
+      next++;
+    }
+    return { labels, comps };
+  }
+
+  function smooth(p) {
+    let a = p;
+    for (let it = 0; it < 2; it++) {
+      const o = new Float32Array(a.length);
+      for (let i = 0; i < a.length; i++) {
+        const l = a[i > 0 ? i - 1 : 0], r = a[i < a.length - 1 ? i + 1 : i];
+        o[i] = 0.25 * l + 0.5 * a[i] + 0.25 * r;
+      }
+      a = o;
+    }
+    return a;
+  }
+
+  // Layout of a smoothed coverage profile: plateau level, the significant runs
+  // above half-plateau (the layers) and the outer panel edges. Runs narrower
+  // than 4% of the extent (slivers at the frame border, reflections) are ignored.
+  function layout(p) {
+    const L = p.length;
+    let pmax = 0;
+    for (let i = 0; i < L; i++) if (p[i] > pmax) pmax = p[i];
+    if (pmax <= 0) return null;
+    let i0 = -1, i1 = -1;
+    for (let i = 0; i < L; i++) if (p[i] > 0.25 * pmax) { if (i0 < 0) i0 = i; i1 = i; }
+    if (i1 - i0 < 24) return null;
+    const seg = Array.from(p.subarray(i0, i1 + 1)).sort((a, b) => a - b);
+    const plat = seg[Math.floor(0.85 * (seg.length - 1))];
+    const half = 0.5 * plat;
+    const minW = Math.max(3, 0.04 * (i1 - i0));
+    const runs = [];
+    let rs = -1;
+    for (let i = 0; i <= L; i++) {
+      const hi = i < L && p[i] >= half;
+      if (hi && rs < 0) rs = i;
+      if (!hi && rs >= 0) {
+        const re = i - 1;
+        const a = rs === 0 ? 0 : rs - 1 + (half - p[rs - 1]) / (p[rs] - p[rs - 1]);
+        const b = re === L - 1 ? L - 1 : re + (p[re] - half) / (p[re] - p[re + 1]);
+        if (b - a >= minW) runs.push({ a, b, rs, re });
+        rs = -1;
+      }
+    }
+    if (!runs.length) return null;
+    return { plat, half, runs, left: runs[0].a, right: runs[runs.length - 1].b };
+  }
+
+  // Finds the panel extent and the two inner grooves in a 1D coverage profile.
+  function analyzeProfile(raw) {
+    const p = smooth(raw);
+    const L = p.length;
+    const lay = layout(p);
+    if (!lay) return { ok: false, why: "edges" };
+    const { plat, runs, left, right } = lay;
+    const ext = right - left;
+    if (runs.length < 3) return { ok: false, why: "grooves" };
+
+    // Gaps between consecutive layers = groove candidates.
+    const gaps = [];
+    for (let j = 0; j + 1 < runs.length; j++) {
+      const rs = runs[j].re + 1, re = runs[j + 1].rs - 1;
+      if (re < rs) continue;
+      const w = Math.max(2, ((re - rs + 1) / 2) | 0);
+      let sw = 0, sx = 0, mn = Infinity, area = 0;
+      for (let k = Math.max(0, rs - w); k <= Math.min(L - 1, re + w); k++) {
+        const d = plat - p[k];
+        if (d > 0) { sw += d; sx += d * k; }
+      }
+      for (let k = rs; k <= re; k++) { area += plat - p[k]; if (p[k] < mn) mn = p[k]; }
+      gaps.push({ c: sx / sw, width: runs[j + 1].a - runs[j].b, area, depth: mn / plat });
+    }
+    if (gaps.length < 2) return { ok: false, why: "grooves" };
+    gaps.sort((x, y) => y.area - x.area);
+    let g1 = gaps[0], g2 = null;
+    for (let j = 1; j < gaps.length; j++) {
+      if (Math.abs(gaps[j].c - g1.c) > 0.08 * ext) { g2 = gaps[j]; break; }
+    }
+    if (!g2) return { ok: false, why: "grooves" };
+    if (g2.c < g1.c) { const t = g1; g1 = g2; g2 = t; }
+
+    const gw = 0.5 * (g1.width + g2.width);
+    const rim = 0.5 * gw;
+    const b = [left - rim, g1.c, g2.c, right + rim];
+    const tot = b[3] - b[0];
+    const fr = [(b[1] - b[0]) / tot, (b[2] - b[1]) / tot, (b[3] - b[2]) / tot];
+    const depth = Math.max(g1.depth, g2.depth);
+    const sane = fr.every((f) => f > 0.07 && f < 0.75) && depth < 0.4;
+    return { ok: sane, why: sane ? "" : "shape", b, fr, gw, depth, plat };
+  }
+
+  // Shared front end: gold mask, face group, grid orientation, rotated frame.
+  function prepare(img, W, H) {
+    const N = W * H;
+    const mk = masks(img, W, H);
+    const { bright, val } = mk;
+    const rs = Math.max(1, Math.round(0.0022 * Math.max(W, H)));
+    const gold = morph(morph(mk.gold, W, H, rs, false), W, H, rs, true);
+    const R = Math.max(2, Math.round(0.02 * Math.max(W, H)));
+    const D = morph(gold, W, H, R, false);
+    const { labels, comps } = components(D, W, H);
+
+    const minArea = 0.002 * N;
+    let best = -1;
+    for (let j = 1; j < comps.length; j++) if (best < 0 || comps[j].area > comps[best].area) best = j;
+    if (best < 0 || comps[best].area < minArea * 5) return null;
+    const inG = new Uint8Array(comps.length);
+    inG[best] = 1;
+    const ub = { x0: comps[best].x0, y0: comps[best].y0, x1: comps[best].x1, y1: comps[best].y1 };
+    for (let changed = true; changed; ) {
+      changed = false;
+      const tol = 0.12 * Math.max(ub.x1 - ub.x0, ub.y1 - ub.y0);
+      for (let j = 1; j < comps.length; j++) {
+        const c = comps[j];
+        if (inG[j] || c.area < minArea) continue;
+        const gx = Math.max(0, c.x0 - ub.x1, ub.x0 - c.x1);
+        const gy = Math.max(0, c.y0 - ub.y1, ub.y0 - c.y1);
+        if (Math.max(gx, gy) <= tol) {
+          inG[j] = 1; changed = true;
+          ub.x0 = Math.min(ub.x0, c.x0); ub.y0 = Math.min(ub.y0, c.y0);
+          ub.x1 = Math.max(ub.x1, c.x1); ub.y1 = Math.max(ub.y1, c.y1);
+        }
+      }
+    }
+
+    const closed = morph(D, W, H, R, true);
+
+    // Dominant grid orientation (mod 90 deg) from squared-magnitude weighted 4-phi average.
+    let C4 = 0, S4 = 0;
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        if (!inG[labels[i]]) continue;
+        const gx = val[i - W + 1] + 2 * val[i + 1] + val[i + W + 1] - val[i - W - 1] - 2 * val[i - 1] - val[i + W - 1];
+        const gy = val[i + W - 1] + 2 * val[i + W] + val[i + W + 1] - val[i - W - 1] - 2 * val[i - W] - val[i - W + 1];
+        const m2 = gx * gx + gy * gy;
+        if (m2 < 0.05) continue;
+        const a = gx * gx - gy * gy, b = 2 * gx * gy;
+        C4 += (a * a - b * b) / m2;
+        S4 += (2 * a * b) / m2;
+      }
+    }
+    const theta = 0.25 * Math.atan2(S4, C4);
+    const cs = Math.cos(theta), sn = Math.sin(theta);
+
+    const corners = [[0, 0], [W, 0], [0, H], [W, H]];
+    let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+    for (const [x, y] of corners) {
+      const u = x * cs + y * sn, v = -x * sn + y * cs;
+      uMin = Math.min(uMin, u); uMax = Math.max(uMax, u);
+      vMin = Math.min(vMin, v); vMax = Math.max(vMax, v);
+    }
+    const Lu = Math.ceil(uMax - uMin) + 2, Lv = Math.ceil(vMax - vMin) + 2;
+    const isPanel = (i) => inG[labels[i]] && (gold[i] || (bright[i] && closed[i]));
+    return { gold, bright, val, labels, inG, closed, theta, cs, sn, uMin, vMin, Lu, Lv, isPanel };
+  }
+
+  function analyze(img, W, H) {
+    const P = prepare(img, W, H);
+    if (!P) return { ok: false, why: "nogold" };
+    const { gold, bright, closed, labels, inG, theta, cs, sn, uMin, vMin, Lu, Lv, isPanel } = P;
+
+    // Pass 1: coverage profiles of every panel pixel in the face group.
+    const pu = new Float32Array(Lu), pv = new Float32Array(Lv);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!isPanel(y * W + x)) continue;
+        const cx = x + 0.5, cy = y + 0.5;
+        const u = cx * cs + cy * sn - uMin, v = -cx * sn + cy * cs - vMin;
+        const ui = u | 0, vi = v | 0, fu = u - ui, fv = v - vi;
+        pu[ui] += 1 - fu; pu[ui + 1] += fu;
+        pv[vi] += 1 - fv; pv[vi + 1] += fv;
+      }
+    }
+    const au1 = analyzeProfile(pu), av1 = analyzeProfile(pv);
+    const base = { theta, cs, sn, uMin, vMin, W, H, cut: false, tilt: 0 };
+    if (!au1.ok || !av1.ok) return Object.assign(base, { ok: false, why: au1.ok ? av1.why : au1.why, u: au1, v: av1 });
+
+    // Pass 2: only panel pixels inside the face outline found in pass 1 (drops
+    // background blobs touching the rim), plus half-face profiles for the keystone check.
+    const mu = 0.5 * au1.gw, mv = 0.5 * av1.gw;
+    const u0 = au1.b[0] - mu, u3 = au1.b[3] + mu, v0 = av1.b[0] - mv, v3 = av1.b[3] + mv;
+    const um = 0.5 * (au1.b[0] + au1.b[3]), vm = 0.5 * (av1.b[0] + av1.b[3]);
+    const qu = new Float32Array(Lu), qv = new Float32Array(Lv);
+    const pt = new Float32Array(Lu), pb = new Float32Array(Lu), pl = new Float32Array(Lv), pr = new Float32Array(Lv);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!isPanel(y * W + x)) continue;
+        const cx = x + 0.5, cy = y + 0.5;
+        const u = cx * cs + cy * sn - uMin, v = -cx * sn + cy * cs - vMin;
+        if (u < u0 || u > u3 || v < v0 || v > v3) continue;
+        const ui = u | 0, vi = v | 0, fu = u - ui, fv = v - vi;
+        qu[ui] += 1 - fu; qu[ui + 1] += fu;
+        qv[vi] += 1 - fv; qv[vi + 1] += fv;
+        const hu = v < vm ? pt : pb, hv = u < um ? pl : pr;
+        hu[ui] += 1 - fu; hu[ui + 1] += fu;
+        hv[vi] += 1 - fv; hv[vi + 1] += fv;
+      }
+    }
+    const au = analyzeProfile(qu), av = analyzeProfile(qv);
+    const ok = au.ok && av.ok;
+    const res = Object.assign(base, { ok, why: ok ? "" : (au.ok ? av.why : au.why), u: au, v: av });
+    if (!ok) return res;
+
+    // Cut: an outer panel edge lying on (or beyond) the frame border.
+    const ul = au.b[0] + 0.5 * au.gw, ur = au.b[3] - 0.5 * au.gw;
+    const vl = av.b[0] + 0.5 * av.gw, vr = av.b[3] - 0.5 * av.gw;
+    for (const [up, vp] of [[ul, vl], [ur, vl], [ul, vr], [ur, vr]]) {
+      const [x, y] = toImage(res, up, vp);
+      if (Math.min(x, y, W - x, H - y) < 1.0) res.cut = true;
+    }
+
+    // Tilt: compare the face width near its two opposite ends (keystone).
+    const et = layout(smooth(pt)), eb = layout(smooth(pb)), el = layout(smooth(pl)), er = layout(smooth(pr));
+    if (et && eb && el && er) {
+      const kx = (et.right - et.left) / (eb.right - eb.left);
+      const ky = (el.right - el.left) / (er.right - er.left);
+      res.tilt = Math.max(Math.abs(Math.log(kx)), Math.abs(Math.log(ky)));
+    }
+    return res;
+  }
+
+  // ---------- scrambled faces ----------
+
+  // Every groove-like gap in a coverage profile: centre, depth (min / plateau), width at half plateau.
+  function grooveGaps(raw, thrFrac = 0.3) {
+    const p = smooth(raw);
+    const L = p.length;
+    let pmax = 0;
+    for (let i = 0; i < L; i++) if (p[i] > pmax) pmax = p[i];
+    if (pmax <= 0) return null;
+    let i0 = -1, i1 = -1;
+    for (let i = 0; i < L; i++) if (p[i] > 0.15 * pmax) { if (i0 < 0) i0 = i; i1 = i; }
+    if (i1 - i0 < 30) return null;
+    const seg = Array.from(p.subarray(i0, i1 + 1)).sort((a, b) => a - b);
+    const plat = seg[Math.floor(0.85 * (seg.length - 1))];
+    const thr = thrFrac * plat, half = 0.5 * plat, ext = i1 - i0;
+    const minW = Math.max(3, 0.04 * ext);
+    const runs = [];
+    let rs = -1;
+    for (let i = 0; i <= L; i++) {
+      const hi = i < L && p[i] >= thr;
+      if (hi && rs < 0) rs = i;
+      if (!hi && rs >= 0) { if (i - rs >= minW) runs.push([rs, i - 1]); rs = -1; }
+    }
+    const gaps = [];
+    for (let j = 0; j + 1 < runs.length; j++) {
+      const a = runs[j][1] + 1, b = runs[j + 1][0] - 1;
+      let sw = 0, sx = 0, mn = Infinity;
+      const w = Math.max(2, ((b - a + 1) / 2) | 0);
+      for (let k = Math.max(0, a - w); k <= Math.min(L - 1, b + w); k++) {
+        const d = plat - p[k];
+        if (d > 0) { sw += d; sx += d * k; }
+      }
+      for (let k = a; k <= b; k++) if (p[k] < mn) mn = p[k];
+      let l = a, r = b;
+      while (l > 0 && p[l - 1] < half) l--;
+      while (r < L - 1 && p[r + 1] < half) r++;
+      gaps.push({ c: sx / sw, depth: mn / plat, width: r - l + 1 });
+    }
+    return { gaps, ext, i0, i1 };
+  }
+
+  // The middle layer is square, so choose the groove pairs in u and in v together:
+  // similar spacing, deep and narrow gaps, and a middle cell near the middle of the face.
+  function chooseGrid(GU, GV, uc, vc) {
+    if (!GU || !GV) return null;
+    const pairs = (G) => {
+      const out = [];
+      const gs = G.gaps.filter((g) => g.depth < 0.7 && g.width < 0.3 * G.ext);
+      for (let i = 0; i < gs.length; i++) for (let j = i + 1; j < gs.length; j++) {
+        const sp = gs[j].c - gs[i].c;
+        if (sp < 0.15 * G.ext || sp > 0.6 * G.ext) continue;
+        out.push({ a: gs[i], b: gs[j], sp });
+      }
+      return { out, gs };
+    };
+    const A = pairs(GU), B = pairs(GV);
+    // A groove hidden by perspective (a recessed piece shows gold where the groove should be)
+    // can be inferred from the other axis, because the middle cell is square.
+    const virt = (P, Q) => {
+      const extra = [];
+      for (const q of Q.out) for (const g of P.gs) for (const sg of [-1, 1]) {
+        const c = g.c + sg * q.sp;
+        const v = { c, depth: 0.8, width: g.width, virtual: true };
+        const [a, b] = sg > 0 ? [g, v] : [v, g];
+        extra.push({ a, b, sp: q.sp });
+      }
+      return extra;
+    };
+    const PU = A.out.concat(A.out.length ? [] : virt(A, B));
+    const PV = B.out.concat(B.out.length ? [] : virt(B, A));
+    let best = null;
+    for (const pu of PU) for (const pv of PV) {
+      if ((pu.a.virtual || pu.b.virtual) && (pv.a.virtual || pv.b.virtual)) continue;
+      const mean = 0.5 * (pu.sp + pv.sp), mis = Math.abs(pu.sp - pv.sp) / mean;
+      if (mis > 0.3) continue;
+      const depth = pu.a.depth + pu.b.depth + pv.a.depth + pv.b.depth;
+      const width = (pu.a.width + pu.b.width + pv.a.width + pv.b.width) / (4 * mean);
+      const off = Math.abs(0.5 * (pu.a.c + pu.b.c) - uc) / mean + Math.abs(0.5 * (pv.a.c + pv.b.c) - vc) / mean;
+      const cost = 8 * mis + 2 * depth + 2 * width + 0.6 * off;
+      if (!best || cost < best.cost) best = { cost, mis, gu: { c1: pu.a.c, c2: pu.b.c, w1: pu.a.width, w2: pu.b.width }, gv: { c1: pv.a.c, c2: pv.b.c, w1: pv.a.width, w2: pv.b.width } };
+    }
+    return best;
+  }
+
+  const mergeGaps = (a, b) => {
+    if (!a || !b) return a || b;
+    const gaps = a.gaps.slice();
+    for (const g of b.gaps) if (!gaps.some((x) => Math.abs(x.c - g.c) < 0.03 * a.ext)) gaps.push(g);
+    return Object.assign({}, a, { gaps });
+  };
+
+  // The two inner grooves (the fixed cut planes) of a face, even when its outline is jagged.
+  function innerGrooves(raw) {
+    const p = smooth(raw);
+    const L = p.length;
+    let pmax = 0;
+    for (let i = 0; i < L; i++) if (p[i] > pmax) pmax = p[i];
+    if (pmax <= 0) return null;
+    let i0 = -1, i1 = -1;
+    for (let i = 0; i < L; i++) if (p[i] > 0.15 * pmax) { if (i0 < 0) i0 = i; i1 = i; }
+    if (i1 - i0 < 30) return null;
+    const seg = Array.from(p.subarray(i0, i1 + 1)).sort((a, b) => a - b);
+    const plat = seg[Math.floor(0.85 * (seg.length - 1))];
+    const thr = 0.3 * plat, half = 0.5 * plat;
+    const minW = Math.max(3, 0.05 * (i1 - i0));
+    const runs = [];
+    let rs = -1;
+    for (let i = 0; i <= L; i++) {
+      const hi = i < L && p[i] >= thr;
+      if (hi && rs < 0) rs = i;
+      if (!hi && rs >= 0) { if (i - rs >= minW) runs.push([rs, i - 1]); rs = -1; }
+    }
+    if (runs.length < 3) return null;
+    const gaps = [];
+    for (let j = 0; j + 1 < runs.length; j++) {
+      const a = runs[j][1] + 1, b = runs[j + 1][0] - 1;
+      let sw = 0, sx = 0, area = 0, mn = Infinity;
+      const w = Math.max(2, ((b - a + 1) / 2) | 0);
+      for (let k = Math.max(0, a - w); k <= Math.min(L - 1, b + w); k++) {
+        const d = plat - p[k];
+        if (d > 0) { sw += d; sx += d * k; }
+      }
+      for (let k = a; k <= b; k++) { area += plat - p[k]; if (p[k] < mn) mn = p[k]; }
+      // width at half plateau around the gap
+      let l = a, r = b;
+      while (l > 0 && p[l - 1] < half) l--;
+      while (r < L - 1 && p[r + 1] < half) r++;
+      gaps.push({ c: sx / sw, area, depth: mn / plat, width: r - l + 1 });
+    }
+    gaps.sort((x, y) => y.area - x.area);
+    let g1 = gaps[0], g2 = null;
+    for (let j = 1; j < gaps.length; j++) if (Math.abs(gaps[j].c - g1.c) > 0.15 * (i1 - i0)) { g2 = gaps[j]; break; }
+    if (!g2 || Math.max(g1.depth, g2.depth) > 0.45) return null;
+    if (g2.c < g1.c) { const t = g1; g1 = g2; g2 = t; }
+    return { c1: g1.c, c2: g2.c, w1: g1.width, w2: g2.width };
+  }
+
+  // In a directional coverage profile q (index i <-> s = i - off, s = distance from the
+  // cut plane), find the local groove near s = 0 and the outer end of the panel beyond it.
+  // A strongly recessed sticker can be partly hidden by a protruding neighbour: then the
+  // dark band is much wider than a groove and the global cut-plane line is used instead.
+  function localPanel(q, off, full, gw) {
+    const half = 0.5 * full, n = q.length;
+    let lo = Math.max(0, Math.floor(off - gw)), hi = Math.min(n - 1, Math.ceil(off + gw));
+    let im = lo;
+    for (let i = lo; i <= hi; i++) if (q[i] < q[im]) im = i;
+    if (q[im] >= half) {
+      // the line falls on a panel: look a little further for the groove
+      lo = Math.max(0, Math.floor(off - 2.5 * gw)); hi = Math.min(n - 1, Math.ceil(off + 2.5 * gw));
+      im = lo;
+      for (let i = lo; i <= hi; i++) if (q[i] < q[im]) im = i;
+      if (q[im] >= half) return { err: "sticker" };
+    }
+    let a = im, b = im;
+    while (a > 0 && q[a - 1] < half) a--;
+    while (b < n - 1 && q[b + 1] < half) b++;
+    let g;
+    if (b - a > 1.8 * gw) {
+      g = off;                               // occluded: trust the global line
+    } else {
+      let sw = 0, sx = 0;
+      for (let i = Math.max(0, a - 2); i <= Math.min(n - 1, b + 2); i++) {
+        const d = full - q[i];
+        if (d > 0) { sw += d; sx += d * i; }
+      }
+      g = sx / sw;
+    }
+    // the panel is the first run above half that is not a thin highlight
+    const minRun = Math.max(3, 0.5 * gw);
+    let i = b + 1, end = -1;
+    while (end < 0) {
+      if (i >= n) return { err: "sticker" };
+      let j = i;
+      while (j < n && q[j] >= half) j++;
+      if (j >= n) return { err: "cut" };
+      if (j - i >= minRun) end = j - 1 + (q[j - 1] - half) / (q[j - 1] - q[j]);
+      else { i = j; while (i < n && q[i] < half) i++; }
+    }
+    return { g: g - off, end: end - off, occluded: b - a > 1.8 * gw };
+  }
+
+  const STICKERS = {
+    TL: [0, 0, ["up", "left"]], T: [0, 1, ["up"]], TR: [0, 2, ["up", "right"]],
+    L: [1, 0, ["left"]], R: [1, 2, ["right"]],
+    BL: [2, 0, ["down", "left"]], B: [2, 1, ["down"]], BR: [2, 2, ["down", "right"]],
+  };
+
+  // Measures one face of a (possibly scrambled) cube photographed head-on:
+  // for every border sticker, how far the piece reaches past the cut planes,
+  // in % of the cube side (the middle layer is the ruler).
+  function analyzeScrambled(img, W, H, middle = 33.6) {
+    const P = prepare(img, W, H);
+    if (!P) return { ok: false, why: "nogold" };
+    const { cs, sn, uMin, vMin, Lu, Lv, isPanel } = P;
+    // First pass: profiles across a central band of the face (fewer rows mixed, so
+    // perspective shifts between rows smear the grooves less), then the whole face.
+    let su = 0, sv = 0, sn0 = 0, u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!isPanel(y * W + x)) continue;
+      const cx = x + 0.5, cy = y + 0.5;
+      const u = cx * cs + cy * sn - uMin, v = -cx * sn + cy * cs - vMin;
+      su += u; sv += v; sn0++;
+      if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v;
+    }
+    if (!sn0) return { ok: false, why: "nogold" };
+    const uc = su / sn0, vc = sv / sn0, bu = 0.18 * (u1 - u0), bv = 0.18 * (v1 - v0);
+    const pu = new Float32Array(Lu), pv = new Float32Array(Lv), fu_ = new Float32Array(Lu), fv_ = new Float32Array(Lv);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!isPanel(y * W + x)) continue;
+      const cx = x + 0.5, cy = y + 0.5;
+      const u = cx * cs + cy * sn - uMin, v = -cx * sn + cy * cs - vMin;
+      const ui = u | 0, vi = v | 0, fu = u - ui, fv = v - vi;
+      fu_[ui] += 1 - fu; fu_[ui + 1] += fu; fv_[vi] += 1 - fv; fv_[vi + 1] += fv;
+      if (Math.abs(v - vc) < bv) { pu[ui] += 1 - fu; pu[ui + 1] += fu; }
+      if (Math.abs(u - uc) < bu) { pv[vi] += 1 - fv; pv[vi + 1] += fv; }
+    }
+    const gg = (p) => mergeGaps(grooveGaps(p, 0.3), grooveGaps(p, 0.55));
+    const pick = chooseGrid(gg(pu), gg(pv), uc, vc) || chooseGrid(gg(fu_), gg(fv_), uc, vc);
+    const base = { theta: P.theta, cs, sn, uMin, vMin, W, H };
+    if (!pick) return Object.assign(base, { ok: false, why: "grooves" });
+    let gu = pick.gu, gv = pick.gv;
+    // Refine on the middle row / middle column only: there every sticker has the same
+    // height, so the grooves are clean and their width is measured correctly.
+    {
+      const m0 = 0.5 * (gu.c2 - gu.c1 + gv.c2 - gv.c1), k = 0.2 * m0;
+      const ru = new Float32Array(Lu), rv = new Float32Array(Lv);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        if (!isPanel(y * W + x)) continue;
+        const cx = x + 0.5, cy = y + 0.5;
+        const u = cx * cs + cy * sn - uMin, v = -cx * sn + cy * cs - vMin;
+        if (v > gv.c1 + k && v < gv.c2 - k) { const ui = u | 0, fu = u - ui; ru[ui] += 1 - fu; ru[ui + 1] += fu; }
+        if (u > gu.c1 + k && u < gu.c2 - k) { const vi = v | 0, fv = v - vi; rv[vi] += 1 - fv; rv[vi + 1] += fv; }
+      }
+      const refine = (G, g) => {
+        if (!G) return g;
+        const nearest = (c) => { let b = null; for (const x of G.gaps) if (x.depth < 0.45 && Math.abs(x.c - c) < k && (!b || Math.abs(x.c - c) < Math.abs(b.c - c))) b = x; return b; };
+        const a = nearest(g.c1), b = nearest(g.c2);
+        return a && b && a !== b ? { c1: a.c, c2: b.c, w1: a.width, w2: b.width } : g;
+      };
+      gu = refine(grooveGaps(ru), gu);
+      gv = refine(grooveGaps(rv), gv);
+    }
+    const g1 = gu.c1, g2 = gu.c2, h1 = gv.c1, h2 = gv.c2;
+    const mu = g2 - g1, mv = h2 - h1, m = 0.5 * (mu + mv);
+    if (Math.abs(mu - mv) / m > 0.25) return Object.assign(base, { ok: false, why: "grid", g: [g1, g2], h: [h1, h2] });
+    const gw = 0.25 * (gu.w1 + gu.w2 + gv.w1 + gv.w2);
+    if (gw > 0.35 * m) return Object.assign(base, { ok: false, why: "grooves", g: [g1, g2], h: [h1, h2] });
+    const a = 0.6 * gw, bw = 0.42 * m, smax = Math.ceil(1.9 * m);
+    // [name, dir, band axis ('u' or 'v'), band lo, band hi, outward: +1/-1 along the other axis, origin]
+    const spec = [];
+    const off = Math.ceil(gw + 0.25 * m);
+    const add = (name, dir, axis, lo, hi) => spec.push({ name, dir, axis, lo, hi, q: new Float32Array(off + smax + 2), full: hi - lo });
+    add("T", "up", "u", g1 + a, g2 - a); add("B", "down", "u", g1 + a, g2 - a);
+    add("L", "left", "v", h1 + a, h2 - a); add("R", "right", "v", h1 + a, h2 - a);
+    add("TL", "up", "u", g1 - bw, g1 - a); add("TL", "left", "v", h1 - bw, h1 - a);
+    add("TR", "up", "u", g2 + a, g2 + bw); add("TR", "right", "v", h1 - bw, h1 - a);
+    add("BL", "down", "u", g1 - bw, g1 - a); add("BL", "left", "v", h2 + a, h2 + bw);
+    add("BR", "down", "u", g2 + a, g2 + bw); add("BR", "right", "v", h2 + a, h2 + bw);
+    for (const sp of spec) {
+      sp.s0 = sp.dir === "up" ? h1 : sp.dir === "down" ? h2 : sp.dir === "left" ? g1 : g2;
+      sp.sg = sp.dir === "up" || sp.dir === "left" ? -1 : 1;
+    }
+    // Size bands: the centre and each edge sticker have the same real width (the middle
+    // layer); their apparent widths differ only by how close each one is to the camera.
+    // Each pair uses mirror-image bands on the two sides of the same groove.
+    const k3 = 0.3 * m, uA = g1 - gw, uB = g2 + gw, vA = h1 - gw, vB = h2 + gw;
+    const sz = [];
+    const addS = (key, part, axis, lo, hi, from, to) => sz.push({ key, part, axis, lo, hi, from, q: new Float32Array(Math.ceil(to - from) + 2), full: hi - lo });
+    addS("T", "e", "v", h1 - k3, h1 - a, uA, uB); addS("T", "c", "v", h1 + a, h1 + k3, uA, uB);
+    addS("B", "e", "v", h2 + a, h2 + k3, uA, uB); addS("B", "c", "v", h2 - k3, h2 - a, uA, uB);
+    addS("L", "e", "u", g1 - k3, g1 - a, vA, vB); addS("L", "c", "u", g1 + a, g1 + k3, vA, vB);
+    addS("R", "e", "u", g2 + a, g2 + k3, vA, vB); addS("R", "c", "u", g2 - k3, g2 - a, vA, vB);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!isPanel(y * W + x)) continue;
+      const cx = x + 0.5, cy = y + 0.5;
+      const u = cx * cs + cy * sn - uMin, v = -cx * sn + cy * cs - vMin;
+      for (const sp of spec) {
+        const band = sp.axis === "u" ? u : v;
+        if (band < sp.lo || band > sp.hi) continue;
+        const along = sp.axis === "u" ? v : u;
+        const s = (along - sp.s0) * sp.sg + off;
+        if (s < 0 || s >= off + smax) continue;
+        const si = s | 0, fs = s - si;
+        sp.q[si] += 1 - fs; sp.q[si + 1] += fs;
+      }
+      for (const b of sz) {
+        const band = b.axis === "v" ? v : u;
+        if (band < b.lo || band > b.hi) continue;
+        const t = (b.axis === "v" ? u : v) - b.from;
+        if (t < 0 || t >= b.q.length - 1) continue;
+        const ti = t | 0, ft = t - ti;
+        b.q[ti] += 1 - ft; b.q[ti + 1] += ft;
+      }
+    }
+    const sizes = {};
+    for (const b of sz) {
+      const half = 0.5 * b.full, q = b.q;
+      let i = Math.round(0.5 * (q.length - 2));
+      if (q[i] < half) continue;
+      let l = i, r = i;
+      while (l > 0 && q[l - 1] >= half) l--;
+      while (r < q.length - 1 && q[r + 1] >= half) r++;
+      if (l === 0 || r === q.length - 1) continue;
+      const le = l - 1 + (half - q[l - 1]) / (q[l] - q[l - 1]);
+      const re = r + (q[r] - half) / (q[r] - q[r + 1]);
+      (sizes[b.key] = sizes[b.key] || {})[b.part] = re - le;
+    }
+    const ext = {}, px = {};
+    let bad = null;
+    for (const sp of spec) {
+      const r = localPanel(sp.q, off, sp.full, gw);
+      if (r.err) { bad = bad || r.err; (base.badAt = base.badAt || []).push(`${sp.name}.${sp.dir}:${r.err}`); continue; }
+      const e = r.end - r.g + 0.5 * gw;          // from the local cut plane to the piece boundary
+      (ext[sp.name] = ext[sp.name] || {})[sp.dir] = (e / m) * middle;
+      (px[sp.name] = px[sp.name] || {})[sp.dir] = r.end + 0.5 * gw;   // from the global groove line
+    }
+    const res = Object.assign(base, { g: [g1, g2], h: [h1, h2], m, gw, ext, px, sizes });
+    const missing = base.badAt ? base.badAt.length : 0;
+    if (bad === "cut" || missing > 1) return Object.assign(res, { ok: false, why: bad });
+    res.missing = missing;
+    // cut: a measured outer boundary on (or past) the frame border
+    const corners = [];
+    for (const nm in STICKERS) {
+      const [r, c] = STICKERS[nm];
+      const e0 = 0.5 * gw; // the panel edge is what we see; the rim beyond it is inferred
+      const pn = px[nm] || {};
+      const uu = c === 0 && pn.left != null ? g1 - pn.left + e0 : c === 2 && pn.right != null ? g2 + pn.right - e0 : null;
+      const vv = r === 0 && pn.up != null ? h1 - pn.up + e0 : r === 2 && pn.down != null ? h2 + pn.down - e0 : null;
+      if (uu !== null) corners.push([uu, vv === null ? 0.5 * (h1 + h2) : vv]);
+      if (vv !== null) corners.push([uu === null ? 0.5 * (g1 + g2) : uu, vv]);
+    }
+    for (const [up, vp] of corners) {
+      const [x, y] = toImage(res, up, vp);
+      if (Math.min(x, y, W - x, H - y) < 1) return Object.assign(res, { ok: false, why: "cut" });
+    }
+    return Object.assign(res, { ok: true, why: "" });
+  }
+
+  // ---------- cube state from six faces ----------
+  const ORDER = "URFDLB";
+  const FACEV = {
+    U: [[0, 1, 0], [1, 0, 0], [0, 0, -1]], R: [[1, 0, 0], [0, 0, -1], [0, 1, 0]],
+    F: [[0, 0, 1], [1, 0, 0], [0, 1, 0]], D: [[0, -1, 0], [1, 0, 0], [0, 0, 1]],
+    L: [[-1, 0, 0], [0, 0, 1], [0, 1, 0]], B: [[0, 0, -1], [-1, 0, 0], [0, 1, 0]],
+  };
+  const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const CORNER_F = [[8, 9, 20], [6, 18, 38], [0, 36, 47], [2, 45, 11], [29, 26, 15], [27, 44, 24], [33, 53, 42], [35, 17, 51]];
+  const CORNER_C = ["URF", "UFL", "ULB", "UBR", "DFR", "DLF", "DBL", "DRB"];
+  const EDGE_F = [[5, 10], [7, 19], [3, 37], [1, 46], [32, 16], [28, 25], [30, 43], [34, 52], [23, 12], [21, 41], [50, 39], [48, 14]];
+  const EDGE_C = ["UR", "UF", "UL", "UB", "DR", "DF", "DL", "DB", "FR", "FL", "BL", "BR"];
+
+  // For each face photo, sticker and direction: the facelet whose colour that measurement reveals.
+  const TARGET = (() => {
+    const out = {};
+    for (const P of ORDER) {
+      const [n, rt, up] = FACEV[P];
+      out[P] = {};
+      for (const nm in STICKERS) {
+        const [r, c, dirs] = STICKERS[nm];
+        const pos = [0, 1, 2].map((k) => n[k] + (c - 1) * rt[k] + (1 - r) * up[k]);
+        out[P][nm] = {};
+        for (const d of dirs) {
+          const vec = d === "left" ? rt.map((x) => -x) : d === "right" ? rt : d === "up" ? up : up.map((x) => -x);
+          const Q = ORDER.split("").find((f) => dot3(FACEV[f][0], vec) === 1);
+          const [nq, rq, uq] = FACEV[Q];
+          const rel = [0, 1, 2].map((k) => pos[k] - nq[k]);
+          const cc = 1 + dot3(rel, rq), rr = 1 - dot3(rel, uq);
+          out[P][nm][d] = ORDER.indexOf(Q) * 9 + rr * 3 + cc;
+        }
+      }
+    }
+    return out;
+  })();
+
+  function measurements(faces) {
+    const meas = Array.from({ length: 54 }, () => []);
+    for (const P of ORDER) {
+      const f = faces[P];
+      if (!f || !f.ext) continue;
+      for (const nm in STICKERS) for (const d of STICKERS[nm][2]) {
+        const x = f.ext[nm] && f.ext[nm][d];
+        if (typeof x === "number" && isFinite(x)) meas[TARGET[P][nm][d]].push({ x, P, nm, d });
+      }
+    }
+    return meas;
+  }
+
+  // Solved cube scan: the thickness of each face, plus consistency checks.
+  function calibrateScan(faces) {
+    const meas = measurements(faces);
+    const thick = {}, spread = {};
+    for (const Q of ORDER) {
+      const vals = [];
+      for (let i = 0; i < 9; i++) vals.push(...meas[ORDER.indexOf(Q) * 9 + i].map((o) => o.x));
+      const mean = vals.reduce((x, y) => x + y, 0) / vals.length;
+      thick[Q] = mean;
+      spread[Q] = Math.max(...vals) - Math.min(...vals);
+    }
+    const sums = { UD: thick.U + thick.D, RL: thick.R + thick.L, FB: thick.F + thick.B };
+    const vals = Object.values(thick).sort((x, y) => x - y);
+    let gap = Infinity;
+    for (let i = 1; i < vals.length; i++) gap = Math.min(gap, vals[i] - vals[i - 1]);
+    let why = "";
+    if (Math.max(...Object.values(spread)) > 6) why = "spread";
+    else if (Object.values(sums).some((s) => Math.abs(s - 66.4) > 3.5)) why = "order";
+    else if (gap < 3) why = "similar";
+    return { ok: !why, why, thick, spread, sums, gap };
+  }
+
+  function hungarian(C) {
+    const n = C.length, INF = 1e18;
+    const u = new Array(n + 1).fill(0), v = new Array(n + 1).fill(0), p = new Array(n + 1).fill(0), way = new Array(n + 1).fill(0);
+    for (let i = 1; i <= n; i++) {
+      p[0] = i; let j0 = 0;
+      const minv = new Array(n + 1).fill(INF), used = new Array(n + 1).fill(false);
+      do {
+        used[j0] = true;
+        const i0 = p[j0]; let delta = INF, j1 = 0;
+        for (let j = 1; j <= n; j++) if (!used[j]) {
+          const cur = C[i0 - 1][j - 1] - u[i0] - v[j];
+          if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
+          if (minv[j] < delta) { delta = minv[j]; j1 = j; }
+        }
+        for (let j = 0; j <= n; j++) {
+          if (used[j]) { u[p[j]] += delta; v[j] -= delta; } else minv[j] -= delta;
+        }
+        j0 = j1;
+      } while (p[j0] !== 0);
+      do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0);
+    }
+    const ans = new Array(n);
+    for (let j = 1; j <= n; j++) ans[p[j] - 1] = j - 1;
+    return ans;
+  }
+
+  function parity(perm) {
+    let s = 0;
+    for (let i = 0; i < perm.length; i++) for (let j = i + 1; j < perm.length; j++) if (perm[i] > perm[j]) s ^= 1;
+    return s;
+  }
+
+  // Scrambled scan -> facelet string (URFDLB), choosing the most likely valid cube.
+  function decode(faces, thick) {
+    const meas = measurements(faces);
+    // Huber loss: one wild measurement cannot outvote the rest of the cube
+    const hub = (d) => { const a = Math.abs(d); return a <= 4 ? a * a : 8 * a - 16; };
+    const sq = (list, col) => list.reduce((acc, o) => acc + hub(o.x - thick[col]), 0);
+    const cc = (i, j, t) => { let s = 0; for (let k = 0; k < 3; k++) s += sq(meas[CORNER_F[i][k]], CORNER_C[j][(k - t + 3) % 3]); return s; };
+    const ec = (i, j, t) => { let s = 0; for (let k = 0; k < 2; k++) s += sq(meas[EDGE_F[i][k]], EDGE_C[j][(k + t) % 2]); return s; };
+    const best = (n, no, f) => {
+      const C = [], O = [];
+      for (let i = 0; i < n; i++) {
+        C.push([]); O.push([]);
+        for (let j = 0; j < n; j++) {
+          let bo = 0, bc = Infinity;
+          for (let t = 0; t < no; t++) { const c = f(i, j, t); if (c < bc) { bc = c; bo = t; } }
+          C[i].push(bc); O[i].push(bo);
+        }
+      }
+      return { C, O };
+    };
+    const cm = best(8, 3, cc), em = best(12, 2, ec);
+    let cp = hungarian(cm.C), ep = hungarian(em.C);
+    let co = cp.map((j, i) => cm.O[i][j]), eo = ep.map((j, i) => em.O[i][j]);
+    const fixes = [];
+    const total = () => cp.reduce((s, j, i) => s + cc(i, j, co[i]), 0) + ep.reduce((s, j, i) => s + ec(i, j, eo[i]), 0);
+
+    const fixTwist = () => {
+      const r = co.reduce((a, b) => a + b, 0) % 3;
+      if (!r) return 0;
+      let bi = -1, bt = 0, bd = Infinity;
+      for (let i = 0; i < 8; i++) for (const dt of [1, 2]) {
+        const t = (co[i] + dt) % 3;
+        if ((r + dt) % 3) continue;
+        const d = cc(i, cp[i], t) - cc(i, cp[i], co[i]);
+        if (d < bd) { bd = d; bi = i; bt = t; }
+      }
+      co[bi] = bt; return bd;
+    };
+    const fixFlip = () => {
+      if (!(eo.reduce((a, b) => a + b, 0) % 2)) return 0;
+      let bi = -1, bd = Infinity;
+      for (let i = 0; i < 12; i++) { const d = ec(i, ep[i], 1 - eo[i]) - ec(i, ep[i], eo[i]); if (d < bd) { bd = d; bi = i; } }
+      eo[bi] = 1 - eo[bi]; return bd;
+    };
+    if (parity(cp) !== parity(ep)) {
+      // cheapest swap of two corners or two edges (orientations re-optimised)
+      let bestD = Infinity, act = null;
+      for (let a = 0; a < 8; a++) for (let b = a + 1; b < 8; b++) {
+        const d = cm.C[a][cp[b]] + cm.C[b][cp[a]] - cm.C[a][cp[a]] - cm.C[b][cp[b]];
+        if (d < bestD) { bestD = d; act = ["c", a, b]; }
+      }
+      for (let a = 0; a < 12; a++) for (let b = a + 1; b < 12; b++) {
+        const d = em.C[a][ep[b]] + em.C[b][ep[a]] - em.C[a][ep[a]] - em.C[b][ep[b]];
+        if (d < bestD) { bestD = d; act = ["e", a, b]; }
+      }
+      const [k, a, b] = act;
+      if (k === "c") { [cp[a], cp[b]] = [cp[b], cp[a]]; co[a] = cm.O[a][cp[a]]; co[b] = cm.O[b][cp[b]]; }
+      else { [ep[a], ep[b]] = [ep[b], ep[a]]; eo[a] = em.O[a][ep[a]]; eo[b] = em.O[b][ep[b]]; }
+      fixes.push({ kind: "swap", piece: k, cost: bestD });
+    }
+    const dt = fixTwist(); if (dt) fixes.push({ kind: "twist", cost: dt });
+    const df = fixFlip(); if (df) fixes.push({ kind: "flip", cost: df });
+
+    const out = new Array(54);
+    for (let f = 0; f < 6; f++) out[f * 9 + 4] = ORDER[f];
+    for (let i = 0; i < 8; i++) for (let k = 0; k < 3; k++) out[CORNER_F[i][k]] = CORNER_C[cp[i]][(k - co[i] + 3) % 3];
+    for (let i = 0; i < 12; i++) for (let k = 0; k < 2; k++) out[EDGE_F[i][k]] = EDGE_C[ep[i]][(k + eo[i]) % 2];
+    // largest disagreement between a measurement and the thickness of its assigned colour
+    let worst = 0, worstFrom = null;
+    for (let i = 0; i < 54; i++) for (const o of meas[i]) {
+      const d = Math.abs(o.x - thick[out[i]]);
+      if (d > worst) { worst = d; worstFrom = o.P; }
+    }
+    return { facelets: out.join(""), cost: total(), fixes, worst, worstFrom, meas };
+  }
+
+  // The 24 rotations of the whole cube, as "content of face P moves to face rot[P]".
+  const ROTS = (() => {
+    const x = { F: "U", U: "B", B: "D", D: "F", R: "R", L: "L" };
+    const y = { F: "L", L: "B", B: "R", R: "F", U: "U", D: "D" };
+    const id = { U: "U", R: "R", F: "F", D: "D", L: "L", B: "B" };
+    const key = (r) => ORDER.split("").map((f) => r[f]).join("");
+    const seen = new Map([[key(id), id]]), queue = [id];
+    while (queue.length) {
+      const r = queue.shift();
+      for (const g of [x, y]) {
+        const n = {}; for (const f of ORDER) n[f] = g[r[f]];
+        const k = key(n);
+        if (!seen.has(k)) { seen.set(k, n); queue.push(n); }
+      }
+    }
+    return [...seen.values()];
+  })();
+
+  // How well the centre heights of a candidate orientation explain the apparent sizes:
+  // log(size of centre / size of edge sticker) ~ alpha * (height of centre - height of edge).
+  function heightFit(faces, th, facelets) {
+    const pairs = [];
+    ORDER.split("").forEach((P, f) => {
+      const sz = (faces[P] && faces[P].sizes) || {};
+      for (const [k, idx] of [["T", 1], ["B", 7], ["L", 3], ["R", 5]]) {
+        const p = sz[k];
+        if (!p || !p.c || !p.e) continue;
+        pairs.push([Math.log(p.c / p.e), th[P] - th[facelets[f * 9 + idx]]]);
+      }
+    });
+    const n = pairs.length;
+    if (n < 8) return { rss: Infinity, alpha: 0, beta: 0, n };
+    // l = beta + alpha * d  (beta absorbs any small size difference between centre and edge stickers)
+    let sl = 0, sd = 0, sdd = 0, sld = 0;
+    for (const [l, d] of pairs) { sl += l; sd += d; sdd += d * d; sld += l * d; }
+    const den = n * sdd - sd * sd;
+    let alpha = den > 0 ? (n * sld - sl * sd) / den : 0;
+    alpha = Math.min(0.006, Math.max(0.0006, alpha));
+    const beta = (sl - alpha * sd) / n;
+    let rss = 0;
+    for (const [l, d] of pairs) rss += (l - beta - alpha * d) ** 2;
+    return { rss, alpha, beta, n };
+  }
+
+  // No calibration and no marks: try every orientation and both mirror versions of the
+  // cube, keep the ones whose pieces fit, then let the centre heights pick the orientation.
+  function decodeAuto(faces, cls) {
+    const b1 = { U: cls.A[0], D: cls.A[1], F: cls.B[0], B: cls.B[1], R: cls.C[0], L: cls.C[1] };
+    const b2 = Object.assign({}, b1, { R: cls.C[1], L: cls.C[0] });
+    const cands = [];
+    for (const base of [b1, b2]) for (const rot of ROTS) {
+      const th = {};
+      for (const P of ORDER) th[rot[P]] = base[P];
+      const d = decode(faces, th);
+      cands.push({ th, d, cost: d.cost });
+    }
+    cands.sort((p, q) => p.cost - q.cost);
+    const best = cands[0].cost;
+    const pool = cands.filter((c) => c.cost <= best + 1 + 1e-6 * best);
+    for (const c of pool) c.fit = heightFit(faces, c.th, c.d.facelets);
+    pool.sort((p, q) => p.fit.rss - q.fit.rss);
+    const win = pool[0], second = pool[1];
+    const sigma2 = 0.007 ** 2;   // measured on real photos of flat faces
+    const margin = second ? (second.fit.rss - win.fit.rss) / sigma2 : Infinity;
+    return Object.assign({}, win.d, { thick: win.th, frame: { pool: pool.length, margin, alpha: win.fit.alpha, rss: win.fit.rss, pairs: win.fit.n } });
+  }
+
+  const ROT90 = { TL: "TR", T: "R", TR: "BR", R: "B", BR: "BL", B: "L", BL: "TL", L: "T" };
+  const DIR90 = { up: "right", right: "down", down: "left", left: "up" };
+  function sameFace(a, b) {
+    if (!a || !b || !a.ext || !b.ext) return Infinity;
+    let best = Infinity;
+    let cur = a.ext;
+    for (let k = 0; k < 4; k++) {
+      let s = 0, n = 0;
+      for (const nm in cur) for (const d in cur[nm]) {
+        const y = b.ext[nm] && b.ext[nm][d];
+        if (typeof y === "number") { s += Math.abs(cur[nm][d] - y); n++; }
+      }
+      if (n >= 8) best = Math.min(best, s / n);
+      const nx = {};
+      for (const nm in cur) { nx[ROT90[nm]] = {}; for (const d in cur[nm]) nx[ROT90[nm]][DIR90[d]] = cur[nm][d]; }
+      cur = nx;
+    }
+    return best;
+  }
+
+  // A face reading turned by k quarter turns (clockwise), as if the photo had been rotated.
+  function rotateReading(r, k) {
+    if (!r || !(k % 4)) return r;
+    let ext = r.ext || {}, sizes = r.sizes || {};
+    for (let i = 0; i < k % 4; i++) {
+      const ne = {}, ns = {};
+      for (const nm in ext) { ne[ROT90[nm]] = {}; for (const d in ext[nm]) ne[ROT90[nm]][DIR90[d]] = ext[nm][d]; }
+      for (const key in sizes) ns[ROT90[key]] = sizes[key];
+      ext = ne; sizes = ns;
+    }
+    return Object.assign({}, r, { ext, sizes });
+  }
+
+  // Tolerant of how the faces were shown: the top and bottom faces may be turned any way,
+  // and the cube may have been rotated to the right instead of the left. The layout that
+  // makes the pieces fit best wins (checked on both mirror versions and both parity classes
+  // of orientation), then the full automatic decode runs on it.
+  function decodeFlexible(faces, cls) {
+    const b1 = { U: cls.A[0], D: cls.A[1], F: cls.B[0], B: cls.B[1], R: cls.C[0], L: cls.C[1] };
+    const b2 = Object.assign({}, b1, { R: cls.C[1], L: cls.C[0] });
+    const id = { U: "U", R: "R", F: "F", D: "D", L: "L", B: "B" };
+    const y = { F: "L", L: "B", B: "R", R: "F", U: "U", D: "D" };
+    const reps = [];
+    for (const base of [b1, b2]) for (const rot of [id, y]) {
+      const th = {};
+      for (const P of ORDER) th[rot[P]] = base[P];
+      reps.push(th);
+    }
+    let best = null;
+    for (const swap of [false, true]) for (let ku = 0; ku < 4; ku++) for (let kd = 0; kd < 4; kd++) {
+      const f = { F: faces.F, B: faces.B, R: swap ? faces.L : faces.R, L: swap ? faces.R : faces.L,
+        U: rotateReading(faces.U, ku), D: rotateReading(faces.D, kd) };
+      let c = Infinity;
+      for (const th of reps) c = Math.min(c, decode(f, th).cost);
+      if (!best || c < best.c) best = { c, f, swap, ku, kd };
+    }
+    const d = decodeAuto(best.f, cls);
+    return Object.assign(d, { layout: { swap: best.swap, ku: best.ku, kd: best.kd } });
+  }
+
+  // Profile coordinates (u', v') back to image pixel coordinates.
+  function toImage(res, up, vp) {
+    const u = up + res.uMin, v = vp + res.vMin;
+    return [u * res.cs - v * res.sn, u * res.sn + v * res.cs];
+  }
+
+  // Groups layer triples (two per recorded face) into cube axes and rates how
+  // well the three layers of each axis can be told apart.
+  function calibrate(triples, cubeMM) {
+    if (!triples.length) return [];
+    const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+    const t = triples.map((x) => [...x].sort((p, q) => p - q)).sort((p, q) => p[0] - q[0]);
+    let groups = [[t[0]]];
+    for (let i = 1; i < t.length; i++) {
+      if (t[i][0] - t[i - 1][0] > 0.02) groups.push([t[i]]);
+      else groups[groups.length - 1].push(t[i]);
+    }
+    while (groups.length > 3) {
+      let bi = 0, bg = Infinity;
+      for (let i = 0; i < groups.length - 1; i++) {
+        const g = mean(groups[i + 1].map((x) => x[0])) - mean(groups[i].map((x) => x[0]));
+        if (g < bg) { bg = g; bi = i; }
+      }
+      groups.splice(bi, 2, groups[bi].concat(groups[bi + 1]));
+    }
+    return groups.map((g) => {
+      const n = g.length;
+      const m = [0, 1, 2].map((k) => mean(g.map((x) => x[k])));
+      let sigma = null;
+      if (n >= 2) {
+        let ss = 0;
+        for (const x of g) for (let k = 0; k < 3; k++) ss += (x[k] - m[k]) ** 2;
+        sigma = Math.sqrt(ss / (2 * (n - 1)));
+      }
+      const gap = Math.min(m[1] - m[0], m[2] - m[1]);
+      const ratio = sigma === null ? null : gap / Math.max(sigma, 0.001);
+      const verdict = ratio === null ? "more" : ratio >= 8 ? "clear" : ratio >= 5 ? "good" : "edge";
+      return { n, m, sigma, gap, gapMM: gap * cubeMM, ratio, verdict };
+    });
+  }
+
+  return { analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, rotateReading, sameFace, ROTS, TARGET, STICKERS };
+})();
+
+if (typeof module !== "undefined") module.exports = MirrorVision;
+
+</script>
+<script>
+(() => {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const app = $(".app"), wrap = $(".stage-wrap"), stage = $("#stage"), ctx = stage.getContext("2d"), art = $("#art");
+  const pill = $("#pill"), pillText = $("#pillText"), shotIn = $("#shot"), fileIn = $("#file");
+  const LINE = "#3EC5F0", BAD = "#FF6B6B", SNAP_LONG = 900, MIDDLE = 33.6;
+  // Layer thicknesses of this cube (% of the side), measured on the owner's six photos.
+  const CLS = { A: [16.8, 49.6], B: [22.7, 43.7], C: [29.4, 36.9] };
+  const THICK0 = { U: 16.8, D: 49.6, F: 22.7, B: 43.7, R: 29.4, L: 36.9 };
+  const SLOTS = [
+    { face: "F", name: "Davanti", live: "Mostrami la faccia davanti, ben dritta", how: "Scegli quale faccia tenere davanti e quale in alto, e ricordalo: per fare le mosse terrai il cubo così. Fotografa la faccia davanti." },
+    { face: "R", name: "Destra", live: "Gira il cubo verso sinistra: la faccia di destra", how: "Gira il cubo di un quarto verso sinistra, senza cambiare la faccia in alto: ora ti guarda quella che era a destra." },
+    { face: "B", name: "Dietro", live: "Ancora verso sinistra: la faccia dietro", how: "Gira ancora di un quarto verso sinistra: ora vedi la faccia dietro." },
+    { face: "L", name: "Sinistra", live: "Ancora verso sinistra: la faccia di sinistra", how: "Gira ancora di un quarto verso sinistra: ora vedi quella che era a sinistra." },
+    { face: "U", name: "Sopra", live: "Inclina il cubo verso di te: la faccia di sopra", how: "Inclina il cubo verso di te e fotografa la faccia di sopra." },
+    { face: "D", name: "Sotto", live: "Inclina il cubo lontano da te: la faccia di sotto", how: "Inclina il cubo lontano da te e fotografa la faccia di sotto." },
+  ];
+  const FACE_NAME = { U: "sopra", D: "sotto", F: "davanti", B: "dietro", R: "destra", L: "sinistra" };
+  const ORD = ["prima", "seconda", "terza", "quarta", "quinta", "sesta"];
+  const WHY = {
+    nogold: "Non vedo il cubo: avvicinati e usa uno sfondo che non sia dorato.",
+    grooves: "Non trovo la griglia: fotografa la faccia di fronte, con il telefono parallelo.",
+    grid: "La griglia sembra storta: tieni il telefono parallelo alla faccia.",
+    sticker: "Un tassello non si vede bene, forse è coperto da un pezzo sporgente: scatta un po' più da lontano, ben di fronte.",
+    cut: "La faccia esce dalla foto: allontanati un po'.",
+  };
+  const st = { phase: "scan", slots: [], cur: 0, still: null, sol: null, decoded: null, solverReady: false };
+  let dpr = 1, toastTimer = 0;
+  const fmt = (x, d = 1) => x.toFixed(d).replace(".", ",");
+  // ---------- generic UI ----------
+  function toast(msg) {
+    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
+  }
+  function flash() {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const f = $("#flash"); f.classList.remove("go"); void f.offsetWidth; f.classList.add("go");
+  }
+  function setPill(s, text) { pill.dataset.s = s; pillText.textContent = text; }
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  function sizeStage() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(1, Math.round(wrap.clientWidth * dpr)), h = Math.max(1, Math.round(wrap.clientHeight * dpr));
+    if (stage.width !== w || stage.height !== h) { stage.width = w; stage.height = h; }
+    drawStage();
+  }
+  new ResizeObserver(sizeStage).observe(wrap);
+
+  // ---------- drawings ----------
+  // Unfolded cube with the marks; `hi` = face to highlight, `vals` = numbers to print per face.
+  function netSVG(hi, onDark, vals) {
+    const s = 36, g = 3, pos = { U: [1, 0], L: [0, 1], F: [1, 1], R: [2, 1], B: [3, 1], D: [1, 2] };
+    const ink = onDark ? "#DCE6ED" : "var(--graphite)", acc = onDark ? "#3EC5F0" : "var(--accent)";
+    const fillHi = onDark ? "rgba(62,197,240,.28)" : "var(--accent-soft)";
+    let out = `<svg viewBox="-2 -2 ${4 * s + 3 * g + 4} ${3 * s + 2 * g + 4}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`;
+    for (const f in pos) {
+      const x = pos[f][0] * (s + g), y = pos[f][1] * (s + g), on = f === hi;
+      out += `<rect x="${x}" y="${y}" width="${s}" height="${s}" rx="2" style="fill:${on ? fillHi : "none"};stroke:${on ? acc : ink};stroke-width:${on ? 2 : 1};opacity:${on || !hi ? 1 : 0.55}"/>`;
+      if (vals) out += `<text x="${x + s / 2}" y="${y + s / 2 + 4}" text-anchor="middle" font-size="11" font-weight="600" font-family="'Barlow Semi Condensed',Barlow,system-ui,sans-serif" style="fill:${onDark ? "#E9F0F4" : "var(--ink)"}">${fmt(vals[f])}</text>`;
+    }
+    if (!vals) {
+      const lab = (f, t) => `<text x="${pos[f][0] * (s + g) + s / 2}" y="${pos[f][1] * (s + g) + s / 2 + 4}" text-anchor="middle" font-size="8.5" font-family="Barlow,system-ui,sans-serif" style="fill:${onDark ? "#DCE6ED" : "var(--graphite)"}">${t}</text>`;
+      out += lab("F", "davanti") + lab("U", "sopra");
+    }
+    return out + "</svg>";
+  }
+
+  const MOVES = {
+    R: ["la colonna destra", "verso l'alto", "verso il basso"],
+    L: ["la colonna sinistra", "verso il basso", "verso l'alto"],
+    U: ["la riga in alto", "verso sinistra", "verso destra"],
+    D: ["la riga in basso", "verso destra", "verso sinistra"],
+    F: ["la faccia davanti", "in senso orario", "in senso antiorario"],
+    B: ["la faccia dietro", "in senso antiorario, guardandola da davanti", "in senso orario, guardandola da davanti"],
+  };
+  const moveCode = (m) => m.replace("'", "′");
+  function moveText(m) {
+    const [obj, cw, ccw] = MOVES[m[0]];
+    if (m.endsWith("2")) return `Gira ${obj} di mezzo giro`;
+    return `Gira di un quarto ${obj} ${m.endsWith("'") ? ccw : cw}`;
+  }
+
+  // Front view of the cube (proportions of this cube) with the move drawn on it.
+  function moveSVG(m, thick) {
+    const f = m[0], half = m.endsWith("2"), inv = m.endsWith("'");
+    const x0 = 60, y0 = 64, S = 200;
+    const cw = [thick.L, MIDDLE, thick.R], rh = [thick.U, MIDDLE, thick.D];
+    const cs = cw.reduce((a, b) => a + b, 0), rs = rh.reduce((a, b) => a + b, 0);
+    const X = [x0], Y = [y0];
+    for (let i = 0; i < 3; i++) { X.push(X[i] + (cw[i] / cs) * S); Y.push(Y[i] + (rh[i] / rs) * S); }
+    const acc = "#3EC5F0", grid = "#8DA2B2";
+    let o = `<svg viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" font-family="Barlow,system-ui,sans-serif">`;
+    const hl = { R: [X[2], y0, X[3] - X[2], S], L: [x0, y0, X[1] - x0, S], U: [x0, y0, S, Y[1] - y0], D: [x0, Y[2], S, Y[3] - Y[2]], F: [x0, y0, S, S] }[f];
+    if (hl) o += `<rect x="${hl[0]}" y="${hl[1]}" width="${hl[2]}" height="${hl[3]}" fill="rgba(62,197,240,.2)"/>`;
+    const faded = f === "B" ? ' opacity="0.55"' : "";
+    o += `<g fill="none" stroke="${grid}" stroke-width="1.6"${faded}><rect x="${x0}" y="${y0}" width="${S}" height="${S}" rx="3"/>`;
+    for (const x of [X[1], X[2]]) o += `<line x1="${x}" y1="${y0}" x2="${x}" y2="${y0 + S}"/>`;
+    for (const y of [Y[1], Y[2]]) o += `<line x1="${x0}" y1="${y}" x2="${x0 + S}" y2="${y}"/>`;
+    o += `</g>`;
+    o += `<text x="160" y="36" text-anchor="middle" font-size="15" fill="#8DA2B2">sopra</text>`;
+    const head = (x, y, ang) => {
+      const a = 13, w = 9, c = Math.cos(ang), s = Math.sin(ang);
+      return `<polygon points="${x + c * 4},${y + s * 4} ${x - c * a + s * w},${y - s * a - c * w} ${x - c * a - s * w},${y - s * a + c * w}" fill="${acc}"/>`;
+    };
+    const line = (xa, ya, xb, yb) => `<line x1="${xa}" y1="${ya}" x2="${xb}" y2="${yb}" stroke="${acc}" stroke-width="7" stroke-linecap="round"/>` + head(xb, yb, Math.atan2(yb - ya, xb - xa));
+    let tip = null;
+    if (f === "R" || f === "L") {
+      const x = f === "R" ? (X[2] + X[3]) / 2 : (x0 + X[1]) / 2;
+      const up = f === "R" ? !inv : inv;
+      o += up ? line(x, y0 + S + 22, x, y0 - 8) : line(x, y0 - 8, x, y0 + S + 22);
+      tip = up ? [x + 16, y0 - 2] : [x + 16, y0 + S + 18];
+    } else if (f === "U" || f === "D") {
+      const y = f === "U" ? (y0 + Y[1]) / 2 : (Y[2] + Y[3]) / 2;
+      const left = f === "U" ? !inv : inv;
+      o += left ? line(x0 + S + 22, y, x0 - 8, y) : line(x0 - 8, y, x0 + S + 22, y);
+      tip = left ? [x0 - 14, y - 16] : [x0 + S + 20, y - 16];
+    } else {
+      const r = f === "F" ? 66 : 126, clockwise = f === "F" ? !inv : inv;
+      const a0 = clockwise ? 150 : 30, a1 = clockwise ? a0 + 270 : a0 - 270;
+      const P = (a) => [x0 + S / 2 + r * Math.cos((a * Math.PI) / 180), y0 + S / 2 + r * Math.sin((a * Math.PI) / 180)];
+      const [sx, sy] = P(a0), [ex, ey] = P(a1);
+      o += `<path d="M ${sx} ${sy} A ${r} ${r} 0 1 ${clockwise ? 1 : 0} ${ex} ${ey}" fill="none" stroke="${acc}" stroke-width="7" stroke-linecap="round"${f === "B" ? ' stroke-dasharray="14 10"' : ""}/>`;
+      const tang = ((a1 + (clockwise ? 90 : -90)) * Math.PI) / 180;
+      o += head(ex, ey, tang);
+      tip = [ex + 10, ey + 22];
+      if (f === "B") o += `<text x="160" y="312" text-anchor="middle" font-size="16" fill="#DCE6ED">faccia dietro, vista da davanti</text>`;
+    }
+    if (half && tip) o += `<text x="${tip[0]}" y="${tip[1]}" font-size="22" font-weight="600" fill="${acc}">×2</text>`;
+    return o + "</svg>";
+  }
+
+  function drawStage() {
+    if (live.on) return;
+    const W = stage.width, H = stage.height;
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+    art.innerHTML = "";
+    if (st.phase === "solve" && st.sol) {
+      const m = st.sol.moves[st.sol.i];
+      if (m) art.innerHTML = moveSVG(m, THICK0);
+      return;
+    }
+    if (st.phase !== "scan") return;
+    const s0 = st.still;
+    if (!s0) {
+      const slot = SLOTS[st.cur] || SLOTS[0];
+      art.innerHTML = netSVG(slot.face, true);
+      return;
+    }
+    const pad = 14 * dpr, top = 50 * dpr;
+    const aw = Math.max(1, W - 2 * pad), ah = Math.max(1, H - top - pad);
+    const sc = Math.min(aw / s0.c.width, ah / s0.c.height);
+    const ox = pad + (aw - s0.c.width * sc) / 2, oy = top + (ah - s0.c.height * sc) / 2;
+    ctx.drawImage(s0.c, ox, oy, s0.c.width * sc, s0.c.height * sc);
+    if (s0.res && s0.res.g) drawReading(s0.res, (x, y) => [x * sc + ox, y * sc + oy], !s0.res.ok);
+  }
+
+  // Outline of every sticker as read, plus the cut planes (dash-dot), like a drawing.
+  function drawReading(res, map, bad) {
+    const P = (u, v) => { const q = MirrorVision.toImage(res, u, v); return map(q[0], q[1]); };
+    const [g1, g2] = res.g, [h1, h2] = res.h, px = res.px || {};
+    const col = bad ? BAD : LINE, lw = 1.6 * dpr;
+    ctx.save(); ctx.lineJoin = "round"; ctx.lineCap = "round";
+    const stroke = (pts, dash) => {
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.setLineDash(dash ? dash.map((x) => x * dpr) : []);
+      ctx.strokeStyle = "rgba(0,0,0,.5)"; ctx.lineWidth = lw + 2.4 * dpr; ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke();
+    };
+    const box = (u0, u1, v0, v1) => stroke([P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1), P(u0, v0)]);
+    const ext = (nm, d) => (px[nm] && px[nm][d]) || 0;
+    if (res.ok) {
+      box(g1 - ext("TL", "left"), g1, h1 - ext("TL", "up"), h1);
+      box(g1, g2, h1 - ext("T", "up"), h1);
+      box(g2, g2 + ext("TR", "right"), h1 - ext("TR", "up"), h1);
+      box(g1 - ext("L", "left"), g1, h1, h2);
+      box(g1, g2, h1, h2);
+      box(g2, g2 + ext("R", "right"), h1, h2);
+      box(g1 - ext("BL", "left"), g1, h2, h2 + ext("BL", "down"));
+      box(g1, g2, h2, h2 + ext("B", "down"));
+      box(g2, g2 + ext("BR", "right"), h2, h2 + ext("BR", "down"));
+    }
+    const span = 0.9 * (g2 - g1);
+    const dd = [11, 4, 2, 4];
+    for (const u of [g1, g2]) stroke([P(u, h1 - span), P(u, h2 + span)], dd);
+    for (const v of [h1, h2]) stroke([P(g1 - span, v), P(g2 + span, v)], dd);
+    ctx.restore();
+  }
+
+  // ---------- phases ----------
+  function setPhase(p) {
+    st.phase = p; app.dataset.phase = p;
+    const on = { scan: 0, solve: 1 }[p];
+    [...$("#steps").children].forEach((li, i) => { li.className = i === on ? "on" : i < on ? "done" : ""; });
+    if (p === "scan") renderScan();
+    if (p === "solve") renderSolve();
+    drawStage();
+  }
+
+  // Back to the photos without losing them (e.g. to redo one face before starting the moves).
+  function backToScan(k) {
+    $("#scanResult").innerHTML = "";
+    st.cur = k == null ? 0 : k;
+    st.still = null;
+    setPhase("scan");
+    setPill("idle", `Rifai: ${SLOTS[st.cur].name}`);
+  }
+
+  function newScan() {
+    st.slots = SLOTS.map((s) => ({ face: s.face, c: null, res: null, thumb: null }));
+    st.cur = 0; st.still = null; st.decoded = null;
+    $("#scanResult").innerHTML = "";
+    setPhase("scan");
+    setPill("idle", `Foto 1 di 6: ${SLOTS[0].name}`);
+  }
+
+  function renderScan() {
+    $("#scanTitle").textContent = "Inquadra il cubo mescolato";
+    $("#scanLead").textContent = "Un video di circa 20 secondi, oppure sei foto nell'ordine indicato. Poi ti dico le mosse.";
+    const ol = $("#slots"); ol.textContent = "";
+    st.slots.forEach((s, i) => {
+      const li = el("li"), b = el("button", "slot");
+      b.type = "button";
+      if (i === st.cur) b.classList.add("cur");
+      if (s.res && s.res.ok) b.classList.add("done");
+      if (s.res && !s.res.ok) b.classList.add("bad");
+      if (s.warn) b.classList.add("warnd");
+      const tile = el("span", "tile");
+      if (s.thumb) { const img = el("img"); img.alt = ""; img.src = s.thumb; tile.append(img); }
+      b.append(tile, document.createTextNode(SLOTS[i].name));
+      b.setAttribute("aria-label", `${SLOTS[i].name}${s.res && s.res.ok ? ", fatta" : ""}`);
+      b.addEventListener("click", () => {
+        st.cur = i;
+        st.still = s.c ? { c: s.c, res: s.res } : null;
+        renderScan(); drawStage();
+        setPill(s.res ? (s.res.ok ? "ok" : "warn") : "idle", s.res ? (s.res.ok ? `${SLOTS[i].name}: letta` : WHY[s.res.why] || "Foto non leggibile") : `Foto ${i + 1} di 6: ${SLOTS[i].name}`);
+      });
+      li.append(b); ol.append(li);
+    });
+    const allOk = st.slots.every((x) => x.res && x.res.ok);
+    $("#btnShot").textContent = st.cur >= 0 ? `${allOk ? "Rifai" : "Scatta"}: ${SLOTS[st.cur].name}` : "Scatta foto";
+    const how = $("#how"); how.innerHTML = "";
+    const allDone = st.slots.every((s) => s.res && s.res.ok);
+    if (!allDone && st.cur >= 0) {
+      how.innerHTML = netSVG(SLOTS[st.cur].face, false);
+      const p = el("p"); p.append(el("b", "", `${st.cur + 1}. ${SLOTS[st.cur].name}`), document.createTextNode(SLOTS[st.cur].how));
+      how.append(p);
+    }
+  }
+
+  function nextOpen(from) {
+    for (let k = 1; k <= 6; k++) { const i = (from + k) % 6; if (!(st.slots[i].res && st.slots[i].res.ok)) return i; }
+    return -1;
+  }
+
+  // ---------- photos ----------
+  async function decodeFile(file) {
+    if ("createImageBitmap" in window) { try { return await createImageBitmap(file); } catch (e) { /* fall back */ } }
+    return await new Promise((resolve, reject) => {
+      const img = new Image(), url = URL.createObjectURL(file);
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+  }
+  function snapshot(src, w, h) {
+    const k = Math.min(1, SNAP_LONG / Math.max(w, h));
+    const c = document.createElement("canvas");
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext("2d", { willReadFrequently: true }).drawImage(src, 0, 0, c.width, c.height);
+    return c;
+  }
+  function readFace(c) {
+    const g = c.getContext("2d", { willReadFrequently: true });
+    return MirrorVision.analyzeScrambled(g.getImageData(0, 0, c.width, c.height).data, c.width, c.height, MIDDLE);
+  }
+  function thumbOf(c, res) {
+    const T = 96, t = document.createElement("canvas"); t.width = t.height = T;
+    const g = t.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, T, T);
+    let sx = 0, sy = 0, side = Math.min(c.width, c.height);
+    if (res && res.g) {
+      const m = res.g[1] - res.g[0];
+      const [x, y] = MirrorVision.toImage(res, 0.5 * (res.g[0] + res.g[1]), 0.5 * (res.h[0] + res.h[1]));
+      side = 4.2 * m; sx = x - side / 2; sy = y - side / 2;
+    }
+    let sw = side, sh = side, dx = 0, dy = 0, dw = T, dh = T;
+    const r = T / side;
+    if (sx < 0) { dx -= sx * r; dw += sx * r; sw += sx; sx = 0; }
+    if (sy < 0) { dy -= sy * r; dh += sy * r; sh += sy; sy = 0; }
+    if (sx + sw > c.width) { const o = sx + sw - c.width; sw -= o; dw -= o * r; }
+    if (sy + sh > c.height) { const o = sy + sh - c.height; sh -= o; dh -= o * r; }
+    if (sw > 0 && sh > 0) g.drawImage(c, sx, sy, sw, sh, dx, dy, dw, dh);
+    return t.toDataURL("image/jpeg", 0.8);
+  }
+
+  async function addPhotos(files) {
+    if (!files.length || st.phase !== "scan") return;
+    if (st.cur < 0) st.cur = 0;
+    const multi = files.length > 1;
+    let i = st.cur;
+    for (const f of files) {
+      if (i < 0 || i > 5) break;
+      let c, res;
+      try {
+        const src = await decodeFile(f);
+        c = snapshot(src, src.width, src.height);
+        if (src.close) src.close();
+        res = readFace(c);
+      } catch (e) {
+        res = { ok: false, why: "nogold" };
+      }
+      const slot = st.slots[i];
+      if (res.ext) {
+        // the same face photographed twice: the later photo in the order is the wrong one
+        const twin = st.slots.findIndex((o, j) => j !== i && o.res && o.res.ext && MirrorVision.sameFace(res, o.res) < 2.0);
+        if (twin >= 0) {
+          const late = Math.max(twin, i), early = Math.min(twin, i);
+          const target = late === i ? res : st.slots[late].res;
+          target.ok = false; target.why = "dup";
+          WHY.dup = `La foto «${SLOTS[late].name}» mostra la stessa faccia di «${SLOTS[early].name}»: rifalla dopo aver girato il cubo come indicato.`;
+        }
+      }
+      Object.assign(slot, { c: c || null, res, thumb: c ? thumbOf(c, res) : null });
+      st.still = c ? { c, res } : null;
+      if (res.ok) {
+        flash();
+        setPill("ok", `${SLOTS[i].name}: letta`);
+      } else {
+        setPill("warn", WHY[res.why] || "Foto non leggibile");
+      }
+      i = multi ? i + 1 : i;
+    }
+    const firstBad = st.slots.findIndex((s) => !(s.res && s.res.ok));
+    if (!multi && st.slots[st.cur].res && st.slots[st.cur].res.ok) st.cur = nextOpen(st.cur);
+    else if (multi) st.cur = firstBad;
+    renderScan(); drawStage();
+    if (st.cur >= 0 && st.slots[st.cur].res && !st.slots[st.cur].res.ok) toast(`${SLOTS[st.cur].name}: ${WHY[st.slots[st.cur].res.why] || "rifai la foto"}`);
+    else if (st.cur >= 0) {
+      toast(`Ora: ${SLOTS[st.cur].name}`);
+      const k = st.cur, shown = st.still;
+      setTimeout(() => {
+        if (st.phase === "scan" && st.cur === k && st.still === shown) {
+          st.still = null; drawStage();
+          setPill("idle", `Foto ${k + 1} di 6: ${SLOTS[k].name}`);
+        }
+      }, 1400);
+    }
+    if (firstBad < 0) finishScan();
+  }
+
+  function finishScan() {
+    const faces = {};
+    st.slots.forEach((s) => { faces[s.face] = s.res; });
+    const box = $("#scanResult"); box.innerHTML = "";
+    const res = el("div", "result");
+    const holes = st.slots.reduce((n, s) => n + (s.res.missing || 0), 0);
+    if (holes > 2) {
+      const k = st.slots.findIndex((s) => s.res.missing);
+      res.append(el("h3", "", "Troppi tasselli illeggibili"));
+      res.append(el("p", "", `In alcune foto un tassello non si leggeva. Rifai la foto «${SLOTS[k].name}», ben di fronte e un po' più da lontano.`));
+      const acts = el("div", "actions");
+      const redo = el("button", "btn primary wide", "Rifai la foto");
+      redo.type = "button";
+      redo.addEventListener("click", () => { st.cur = k; st.still = null; box.innerHTML = ""; renderScan(); drawStage(); shotIn.click(); });
+      acts.append(redo); res.append(acts); box.append(res);
+      setPill("warn", "Rifai una foto");
+      return;
+    }
+    const d = MirrorVision.decodeFlexible(faces, CLS);
+    st.decoded = d;
+    const wk = SLOTS.findIndex((x) => x.face === d.worstFrom);
+    st.slots.forEach((x, j) => { x.warn = d.worst > 5 && j === wk; });
+    renderScan();
+    // Only a real ambiguity (which face is which) stops here. One odd measurement does not:
+    // the pieces must fit together as a whole, so the solution is usually right anyway,
+    // and the solution screen names the photo to redo if the cube does not end up solved.
+    const problem = d.frame.margin < 20 ? "frame" : null;
+    if (problem) {
+      res.append(el("h3", "", problem === "frame" ? "Non capisco quale faccia è quale" : "Una foto non convince"));
+      res.append(el("p", "", problem === "frame"
+        ? "Per riconoscere le facce confronto l'altezza dei centri, e da queste foto la differenza non si vede abbastanza. Rifalle un po' più da vicino, a 25-30 cm, senza zoom."
+        : `Una misura della foto «${SLOTS[wk].name}», la ${ORD[wk]}, segnata in rosso qui sopra, è un po' fuori. Spesso la soluzione è giusta lo stesso: puoi provarla, oppure rifare quella foto ben di fronte.`));
+      const acts = el("div", "actions");
+      const redo = el("button", "btn primary", problem === "frame" ? "Rifai le foto" : "Rifai la foto");
+      redo.type = "button";
+      redo.addEventListener("click", () => {
+        if (problem === "frame") { newScan(); return; }
+        st.cur = SLOTS.findIndex((s) => s.face === d.worstFrom); st.still = null; box.innerHTML = ""; renderScan(); drawStage(); shotIn.click();
+      });
+      const anyway = el("button", "btn", problem === "frame" ? "Risolvi comunque" : "Prova la soluzione");
+      anyway.type = "button"; anyway.addEventListener("click", () => solveNow());
+      acts.append(redo, anyway); res.append(acts);
+      box.append(res);
+      setPill("warn", "Lettura incerta");
+      return;
+    }
+    solveNow();
+  }
+
+  // ---------- video: the six faces from one recording ----------
+  // Frames are sampled, each is read like a photo, consecutive readings of the same face
+  // are grouped, repeated faces (coming back to the front) are dropped, and every face is
+  // measured on several sharp frames (median), which is steadier than a single photo.
+  const quality = (r) => -(r.missing || 0) * 10 - (r.g ? Math.abs((r.g[1] - r.g[0]) - (r.h[1] - r.h[0])) / r.m * 50 : 50);
+  function medianOf(list) { const a = list.slice().sort((x, y) => x - y), n = a.length; return n % 2 ? a[n >> 1] : 0.5 * (a[n / 2 - 1] + a[n / 2]); }
+  function mergeReadings(rs) {
+    const ext = {}, sizes = {};
+    for (const nm in MirrorVision.STICKERS) for (const d of MirrorVision.STICKERS[nm][2]) {
+      const v = rs.map((r) => r.ext && r.ext[nm] && r.ext[nm][d]).filter((x) => typeof x === "number");
+      if (v.length) (ext[nm] = ext[nm] || {})[d] = medianOf(v);
+    }
+    for (const k of ["T", "B", "L", "R"]) {
+      const q = rs.map((r) => r.sizes && r.sizes[k] && r.sizes[k].c && r.sizes[k].e ? r.sizes[k].c / r.sizes[k].e : 0).filter(Boolean);
+      if (q.length) sizes[k] = { c: medianOf(q), e: 1 };
+    }
+    return { ext, sizes };
+  }
+
+  // iPhone does not load a video until it plays, and seeking an unplayed video can hang.
+  // So the video is simply played once, shown on the stage, and frames are read on the fly.
+  async function scanVideo(file) {
+    if (st.phase !== "scan") newScan();
+    setPill("busy", "Video ricevuto, lo apro");
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    v.muted = true; v.defaultMuted = true; v.playsInline = true;
+    v.setAttribute("playsinline", ""); v.setAttribute("webkit-playsinline", ""); v.setAttribute("muted", "");
+    v.preload = "auto";
+    Object.assign(v.style, { width: "100%", height: "100%", objectFit: "contain" });
+    st.still = null; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, stage.width, stage.height);
+    art.innerHTML = ""; art.append(v);
+    v.src = url;
+    const cleanup = () => { try { v.pause(); } catch (e) { /* ignore */ } v.remove(); URL.revokeObjectURL(url); };
+    const fail = (msg) => { cleanup(); drawStage(); setPill("warn", msg); toast(msg); };
+    let started = false;
+    for (let attempt = 0; attempt < 3 && !started; attempt++) {
+      try { await v.play(); started = true; } catch (e) { await new Promise((r) => setTimeout(r, 700)); }
+    }
+    if (!started) { fail("In questa vista non riesco a riprodurre il video. Usa le foto, oppure apri la pagina in Safari."); return; }
+    if (!v.videoWidth) await new Promise((r) => { const t = setTimeout(r, 5000); v.addEventListener("loadedmetadata", () => { clearTimeout(t); r(); }, { once: true }); });
+    if (!v.videoWidth) { fail("Non riesco a leggere le immagini del video. Usa le foto."); return; }
+    const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
+    if (dur && dur < 3) { fail("Il video è troppo corto: servono circa 20 secondi"); return; }
+    const k = Math.min(1, 720 / Math.max(v.videoWidth, v.videoHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+    const g = c.getContext("2d", { willReadFrequently: true });
+    const frames = [];
+    let lastT = -1;
+    await new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      const tick = () => {
+        if (done) return;
+        if (v.ended) { finish(); return; }
+        const t = v.currentTime;
+        if (t - lastT >= 0.25) {
+          lastT = t;
+          g.drawImage(v, 0, 0, c.width, c.height);
+          const res = readFace(c);
+          const f = { t, res };
+          if (res.ok) f.jpg = c.toDataURL("image/jpeg", 0.85);
+          frames.push(f);
+          setPill("busy", dur ? `Guardo il video: ${Math.min(99, Math.round((t / dur) * 100))}%` : `Guardo il video: ${Math.round(t)} s`);
+        }
+        if ("requestVideoFrameCallback" in v) v.requestVideoFrameCallback(tick); else requestAnimationFrame(tick);
+      };
+      v.addEventListener("ended", finish, { once: true });
+      setTimeout(finish, ((dur || 60) + 15) * 1000);
+      tick();
+    });
+    cleanup();
+    if (frames.length < 8) { drawStage(); setPill("warn", "Non sono riuscito a guardare il video. Usa le foto."); return; }
+    // group consecutive readings of the same face; drop repeated faces (returns to the front)
+    const segs = [];
+    for (const f of frames) {
+      if (!f.res.ok) continue;
+      const last = segs[segs.length - 1];
+      if (last && MirrorVision.sameFace(f.res, last.rep.res) < 3) {
+        last.frames.push(f);
+        if (quality(f.res) > quality(last.rep.res)) last.rep = f;
+      } else segs.push({ frames: [f], rep: f });
+    }
+    const faces = [];
+    for (const sg of segs.filter((x) => x.frames.length >= 2)) {
+      if (faces.some((x) => MirrorVision.sameFace(sg.rep.res, x.rep.res) < 3)) continue;
+      faces.push(sg);
+    }
+    if (faces.length < 6) {
+      drawStage();
+      const msg = `Nel video ho trovato ${faces.length} facce su 6: rifallo fermandoti un secondo su ognuna`;
+      setPill("warn", msg); toast(msg);
+      return;
+    }
+    const six = faces.slice().sort((a, b) => b.frames.length - a.frames.length).slice(0, 6).sort((a, b) => a.frames[0].t - b.frames[0].t);
+    for (let i = 0; i < 6; i++) {
+      const sg = six[i];
+      const reads = sg.frames.filter((f) => MirrorVision.sameFace(f.res, sg.rep.res) < 3).map((f) => f.res);
+      const merged = mergeReadings(reads);
+      const img = new Image();
+      await new Promise((r) => { img.onload = r; img.onerror = r; img.src = sg.rep.jpg; });
+      const cv = document.createElement("canvas");
+      cv.width = img.naturalWidth || c.width; cv.height = img.naturalHeight || c.height;
+      cv.getContext("2d").drawImage(img, 0, 0);
+      const res = Object.assign({}, sg.rep.res, merged, { ok: true, frames: reads.length });
+      Object.assign(st.slots[i], { c: cv, res, thumb: thumbOf(cv, res), warn: false });
+    }
+    st.cur = -1; st.still = { c: st.slots[0].c, res: st.slots[0].res };
+    renderScan(); drawStage();
+    setPill("ok", "Sei facce trovate nel video");
+    finishScan();
+  }
+
+  // ---------- live scan: the camera inside the page, read on the fly ----------
+  const live = { on: false, stream: null, video: null, buf: [], proc: null, raf: 0, track: null, torch: false };
+  const NEED = 6;   // steady readings in a row before a face is confirmed
+
+  async function startLive() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { liveUnavailable(); return; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    } catch (e) { liveUnavailable(); return; }
+    if (st.phase !== "scan") newScan();
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.srcObject = stream;
+    try { await v.play(); } catch (e) { /* frames still arrive */ }
+    Object.assign(live, { on: true, stream, video: v, buf: [], track: stream.getVideoTracks()[0], torch: false });
+    // light on by default when the phone allows the page to use it
+    try {
+      const caps = live.track.getCapabilities ? live.track.getCapabilities() : {};
+      if (caps.torch) { await live.track.applyConstraints({ advanced: [{ torch: true }] }); live.torch = true; $("#btnTorch").hidden = false; }
+    } catch (e) { /* no torch control */ }
+    $("#btnTorch").textContent = live.torch ? "Spegni la luce" : "Accendi la luce";
+    app.dataset.live = "on";
+    if (st.cur < 0) st.cur = nextOpen(-1);
+    st.still = null; art.innerHTML = "";
+    liveLoop();
+  }
+  function stopLive() {
+    cancelAnimationFrame(live.raf);
+    live.on = false;
+    if (live.stream) live.stream.getTracks().forEach((t) => t.stop());
+    live.stream = null; live.video = null; live.buf = [];
+    app.dataset.live = "off";
+    $("#liveTip").textContent = "";
+    drawStage();
+  }
+  function liveUnavailable() {
+    const msg = "Qui la fotocamera dal vivo è bloccata: succede nell'app di Claude e anche su claude.ai in Safari. Per la scansione dal vivo apri la pagina da un sito tuo, per esempio GitHub Pages. Intanto puoi usare il video.";
+    setPill("warn", "Fotocamera dal vivo non disponibile");
+    toast(msg);
+    const box = $("#scanResult"); box.innerHTML = "";
+    const r = el("div", "result"); r.append(el("p", "", msg)); box.append(r);
+  }
+  function liveHint(res, pw, ph) {
+    if (!res || res.why === "nogold") return "Inquadra il cubo";
+    if (res.why === "cut") return "Allontanati un po', la faccia esce dall'inquadratura";
+    if (res.why === "grid" || res.why === "grooves") return "Telefono dritto, parallelo alla faccia";
+    if (res.why === "sticker") return "Tieni fermo, evita riflessi forti";
+    return "Tieni fermo";
+  }
+  function drawProgress(res, map, frac) {
+    const [g1, g2] = res.g, [h1, h2] = res.h;
+    const q = MirrorVision.toImage(res, 0.5 * (g1 + g2), 0.5 * (h1 + h2));
+    const [cx, cy] = map(q[0], q[1]);
+    const e = MirrorVision.toImage(res, g2, 0.5 * (h1 + h2));
+    const [ex] = map(e[0], e[1]);
+    const r = Math.max(14 * dpr, 0.32 * Math.abs(ex - cx) * 2);
+    ctx.save();
+    ctx.lineWidth = 6 * dpr; ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.stroke();
+    ctx.strokeStyle = LINE; ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(1, frac)); ctx.stroke();
+    ctx.restore();
+  }
+  function liveLoop() {
+    if (!live.on) return;
+    live.raf = requestAnimationFrame(liveLoop);
+    const v = live.video;
+    if (!v || v.readyState < 2 || !v.videoWidth || st.cur < 0) return;
+    const W = stage.width, H = stage.height, vw = v.videoWidth, vh = v.videoHeight;
+    const s = Math.max(W / vw, H / vh), ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+    ctx.drawImage(v, ox, oy, vw * s, vh * s);
+    const k = Math.min(1, 480 / Math.max(vw, vh)), pw = Math.round(vw * k), ph = Math.round(vh * k);
+    if (!live.proc) live.proc = document.createElement("canvas");
+    const pc = live.proc;
+    if (pc.width !== pw || pc.height !== ph) { pc.width = pw; pc.height = ph; }
+    const g = pc.getContext("2d", { willReadFrequently: true });
+    g.drawImage(v, 0, 0, pw, ph);
+    const res = MirrorVision.analyzeScrambled(g.getImageData(0, 0, pw, ph).data, pw, ph, MIDDLE);
+    const map = (x, y) => [(x / k) * s + ox, (y / k) * s + oy];
+    const slot = st.cur, tip = $("#liveTip");
+    let msg;
+    if (!res.ok) {
+      live.buf = [];
+      msg = liveHint(res, pw, ph);
+      if (res.g) drawReading(res, map, true);
+    } else if (res.m < 0.1 * Math.min(pw, ph)) {
+      live.buf = [];
+      msg = "Avvicinati un po', a circa 30 cm";
+      drawReading(res, map, true);
+    } else {
+      const twin = st.slots.findIndex((o, j) => j !== slot && o.res && o.res.ok && MirrorVision.sameFace(res, o.res) < 3);
+      if (twin >= 0) {
+        live.buf = [];
+        msg = `questa è «${SLOTS[twin].name}», già letta`;
+        drawReading(res, map, true);
+      } else {
+        if (live.buf.length && MirrorVision.sameFace(res, live.buf[0]) >= 3) live.buf = [];
+        const now = performance.now();
+        if (!live.buf.length) live.t0 = now;
+        live.buf.push(res);
+        const frac = Math.min(live.buf.length / NEED, (now - live.t0) / 700);
+        drawReading(res, map, false);
+        drawProgress(res, map, frac);
+        msg = "Tieni fermo…";
+        if (frac >= 1) { confirmLive(res); return; }
+      }
+    }
+    tip.textContent = msg === "Tieni fermo…" ? `${SLOTS[slot].live}: tieni fermo…` : `${SLOTS[slot].live} (${msg.charAt(0).toLowerCase() + msg.slice(1)})`;
+    setPill(res.ok ? "busy" : "idle", `Faccia ${slot + 1} di 6: ${SLOTS[slot].name}`);
+  }
+  function confirmLive(res) {
+    const slot = st.cur, v = live.video;
+    const snap = snapshot(v, v.videoWidth, v.videoHeight);
+    const r900 = readFace(snap);
+    const good = r900.ok && MirrorVision.sameFace(r900, res) < 3;
+    const geo = good ? r900 : res;
+    let canvas = snap;
+    if (!good) { canvas = document.createElement("canvas"); canvas.width = live.proc.width; canvas.height = live.proc.height; canvas.getContext("2d").drawImage(live.proc, 0, 0); }
+    const merged = mergeReadings(live.buf.concat(good ? [r900] : []));
+    const final = Object.assign({}, geo, merged, { ok: true, missing: geo.missing || 0 });
+    Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false });
+    live.buf = [];
+    flash();
+    toast(`${SLOTS[slot].name} letta`);
+    st.cur = nextOpen(slot);
+    renderScan();
+    if (st.cur < 0) {
+      stopLive();
+      st.still = { c: st.slots[0].c, res: st.slots[0].res };
+      drawStage();
+      setPill("ok", "Sei facce lette");
+      finishScan();
+    } else {
+      $("#liveTip").textContent = `Fatto. ${SLOTS[st.cur].live}`;
+    }
+  }
+
+  // ---------- solver ----------
+  function warmSolver() {
+    if (st.solverReady || typeof Cube === "undefined") return;
+    Cube.initSolver(); st.solverReady = true;
+  }
+  // Kociemba's solver is fast but not optimal: on a nearly solved cube it can return a long
+  // solution or pad it with moves that cancel out. Try short solutions first (up to 4
+  // moves), otherwise stop the solver's solution as soon as the cube is solved.
+  function shortSolve(start, maxD) {
+    const F = "URFDLB", path = [];
+    const dfs = (c, depth, last) => {
+      if (depth === 0) return c.isSolved();
+      for (let f = 0; f < 6; f++) {
+        if (f === last || (last >= 0 && f === (last + 3) % 6 && f < last)) continue;
+        const n = new Cube(c);
+        for (let p = 1; p <= 3; p++) {
+          n.multiply(Cube.moves[f]);
+          path.push(F[f] + (p === 1 ? "" : p === 2 ? "2" : "'"));
+          if (dfs(n, depth - 1, f)) return true;
+          path.pop();
+        }
+      }
+      return false;
+    };
+    if (start.isSolved()) return [];
+    for (let d = 1; d <= maxD; d++) { path.length = 0; if (dfs(new Cube(start), d, -1)) return path.slice(); }
+    return null;
+  }
+  function trimSolved(start, moves) {
+    const c = new Cube(start);
+    for (let i = 0; i < moves.length; i++) { c.move(moves[i]); if (c.isSolved()) return moves.slice(0, i + 1); }
+    return moves;
+  }
+
+  function solveNow() {
+    setPill("busy", "Calcolo la soluzione");
+    $("#scanResult").innerHTML = "";
+    const r = el("div", "result"); r.append(el("p", "", "Calcolo la soluzione, qualche secondo...")); $("#scanResult").append(r);
+    setTimeout(() => {
+      try {
+        warmSolver();
+        const cube = Cube.fromString(st.decoded.facelets);
+        let moves = shortSolve(cube, 4);
+        if (!moves) {
+          const alg = cube.solve().trim();
+          moves = trimSolved(cube, alg ? alg.split(/\s+/) : []);
+        }
+        st.sol = { moves, i: 0, finished: false };
+        $("#scanResult").innerHTML = "";
+        setPhase("solve");
+      } catch (e) {
+        $("#scanResult").innerHTML = "";
+        const x = el("div", "result");
+        x.append(el("h3", "", "Soluzione non calcolata"), el("p", "", "Il risolutore non è riuscito a partire. Ricarica la pagina e riprova."));
+        $("#scanResult").append(x);
+        setPill("warn", "Errore del risolutore");
+      }
+    }, 60);
+  }
+
+  function renderSolve() {
+    const s = st.sol, n = s.moves.length;
+    const fix = $("#fixBox"); fix.textContent = "";
+    const dd = st.decoded;
+    if (dd && dd.worst > 6 && s.i === 0 && !s.finished) {
+      const k = SLOTS.findIndex((x) => x.face === dd.worstFrom);
+      const box = el("div", "fix");
+      box.append(el("p", "", `Prima di iniziare: la foto «${SLOTS[k].name}» non mi convince del tutto. Puoi rifarla ora, le altre restano. Oppure inizia pure: di solito la soluzione è giusta lo stesso.`));
+      const acts = el("div", "actions");
+      const b = el("button", "btn primary wide", `Rifai la foto «${SLOTS[k].name}»`);
+      b.type = "button";
+      b.addEventListener("click", () => { backToScan(k); shotIn.click(); });
+      acts.append(b); box.append(acts); fix.append(box);
+    }
+    const hold = $("#hold"); hold.textContent = "";
+    if (st.slots[0] && st.slots[0].thumb) {
+      const img = el("img"); img.alt = "La prima foto"; img.src = st.slots[0].thumb;
+      hold.append(img, el("p", "", "Rimetti il cubo come nella prima foto: questa faccia davanti, con lo stesso lato in alto. Tienilo così per tutte le mosse."));
+    }
+    const note = $("#solveNote"); note.textContent = ""; note.className = "note";
+    if (!n) {
+      $("#moveCount").textContent = "Nessuna mossa";
+      $("#moveCode").textContent = "✓"; $("#moveText").textContent = "Il cubo risulta già risolto.";
+      $("#chips").textContent = ""; $("#btnPrev").disabled = true; $("#btnNext").disabled = true;
+      setPill("ok", "Già risolto");
+      return;
+    }
+    if (s.finished) {
+      $("#moveCount").textContent = `${n} mosse fatte`;
+      $("#moveCode").textContent = "✓";
+      $("#moveText").textContent = "Se tutto è andato bene, il cubo è risolto.";
+      setPill("ok", "Finito");
+    } else {
+      const m = s.moves[s.i];
+      $("#moveCount").textContent = `Mossa ${s.i + 1} di ${n}`;
+      $("#moveCode").textContent = moveCode(m);
+      $("#moveText").textContent = moveText(m);
+      setPill("ok", `Mossa ${s.i + 1} di ${n}`);
+    }
+    $("#btnPrev").disabled = s.i === 0 && !s.finished;
+    $("#btnNext").disabled = s.finished;
+    $("#btnNext").textContent = s.i === n - 1 && !s.finished ? "Fatto" : "Avanti";
+    const ol = $("#chips"); ol.textContent = "";
+    s.moves.forEach((m, i) => {
+      const li = el("li"), b = el("button", "chip", moveCode(m));
+      b.type = "button";
+      if (!s.finished && i === s.i) b.classList.add("now"); else if (s.finished || i < s.i) b.classList.add("past");
+      b.setAttribute("aria-label", `Mossa ${i + 1}: ${moveText(m)}`);
+      b.addEventListener("click", () => { s.i = i; s.finished = false; renderSolve(); drawStage(); });
+      li.append(b); ol.append(li);
+    });
+    const d = st.decoded;
+    if (d && d.frame.margin < 20) {
+      note.classList.add("warn");
+      note.textContent = d.frame.margin < 20
+        ? "Non ero sicuro di quale faccia fosse quale. Se alla fine il cubo non è risolto, rifai le foto più da vicino."
+        : `Una misura della foto «${SLOTS[SLOTS.findIndex((x) => x.face === d.worstFrom)].name}» non tornava del tutto. Se alla fine il cubo non è risolto, rifai quella foto.`;
+    }
+  }
+
+  // ---------- wiring ----------
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    const act = b.dataset.act;
+    if (act === "shot") shotIn.click();
+    else if (act === "file") fileIn.click();
+    else if (act === "rescan") newScan();
+    else if (act === "back") backToScan(st.slots.findIndex((x) => x.warn) >= 0 ? st.slots.findIndex((x) => x.warn) : 0);
+    else if (act === "video") vidIn.click();
+    else if (act === "live") startLive();
+    else if (act === "stoplive") stopLive();
+    else if (act === "torch" && live.track) {
+      live.torch = !live.torch;
+      live.track.applyConstraints({ advanced: [{ torch: live.torch }] }).catch(() => {});
+      $("#btnTorch").textContent = live.torch ? "Spegni la luce" : "Accendi la luce";
+    }
+  });
+  shotIn.addEventListener("change", () => { const f = [...shotIn.files]; shotIn.value = ""; addPhotos(f); });
+  fileIn.addEventListener("change", () => {
+    const f = [...fileIn.files]; fileIn.value = "";
+    const vid = f.find((x) => /^video\//.test(x.type));
+    if (vid) scanVideo(vid); else addPhotos(f);
+  });
+  const vidIn = $("#vid");
+  vidIn.addEventListener("change", () => { const f = vidIn.files[0]; vidIn.value = ""; if (f) scanVideo(f); });
+  $("#btnPrev").addEventListener("click", () => {
+    const s = st.sol; if (s.finished) s.finished = false; else if (s.i > 0) s.i--;
+    renderSolve(); drawStage();
+  });
+  $("#btnNext").addEventListener("click", () => {
+    const s = st.sol; if (s.i < s.moves.length - 1) s.i++; else s.finished = true;
+    renderSolve(); drawStage();
+  });
+
+  newScan();
+  sizeStage();
+  setTimeout(warmSolver, 1500);
+})();
+</script>
+</body>
+</html>
