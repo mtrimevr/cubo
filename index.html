@@ -99,6 +99,13 @@ body {
 .hold { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; background: var(--sheet); border: 1px solid var(--rule); }
 .hold img { flex: none; width: 64px; height: 64px; border-radius: 4px; object-fit: cover; }
 .hold p { margin: 0; font-size: 15px; }
+.model3d { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; align-items: center; margin: 0 0 14px; }
+.m3-view { width: 150px; height: 150px; border-radius: 10px; background: #000; overflow: hidden; touch-action: none; }
+.m3-view canvas { display: block; width: 100%; height: 100%; }
+.m3-pct { margin: 0; font: 600 34px/1 "Barlow Semi Condensed", "Barlow", system-ui, sans-serif; }
+.m3-bar { height: 6px; margin: 8px 0; border-radius: 3px; background: var(--rule); overflow: hidden; }
+.m3-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.m3-label { margin: 0; color: var(--graphite); font-size: 14px; }
 .view3d { position: absolute; inset: 0; touch-action: none; }
 .view3d canvas { display: block; width: 100%; height: 100%; }
 .view3d-note { position: absolute; left: 12px; right: 12px; bottom: 12px; color: #C9D6DF; font: 500 13px/1.3 "Barlow", system-ui, sans-serif; text-align: center; pointer-events: none; }
@@ -213,6 +220,14 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
       <section class="view" id="vScan">
         <h2 id="scanTitle"></h2>
         <p class="lead" id="scanLead"></p>
+        <div class="model3d" id="model3d">
+          <div class="m3-view" id="m3view"></div>
+          <div class="m3-side">
+            <p class="m3-pct num" id="m3pct">0%</p>
+            <div class="m3-bar"><i id="m3bar"></i></div>
+            <p class="m3-label" id="m3label">Modello 3D del cubo: si costruisce man mano che leggo le facce.</p>
+          </div>
+        </div>
         <ol class="slots" id="slots"></ol>
         <div class="how" id="how"></div>
         <div class="actions no-live">
@@ -2358,29 +2373,50 @@ const MirrorVision = (() => {
       hue[i] = h; sat[i] = sv;
       if (sv >= 0.38 && v >= 0.25 && h >= 22 && h < 66) hist[h | 0] += sv;
     }
-    let h0 = 44, best = -1;
+    // Normal light: the gold is clearly saturated. Cold or very bright light (a flash, a white
+    // lamp) can make it almost white: then the hue is still gold, only paler, so the search
+    // is repeated for pale yellow pixels that are brighter than the rest of the picture.
+    let pale = false, vFloor = 0.25;
+    let mass = 0;
+    for (let k = 22; k < 66; k++) mass += hist[k];
+    if (mass < 0.003 * N * 0.5) {
+      pale = true;
+      const vh = new Uint32Array(101);
+      for (let i = 0; i < N; i++) vh[Math.min(100, Math.round(val[i] * 100))]++;
+      let acc = 0, vmed = 0.5;
+      for (let k = 0; k <= 100; k++) { acc += vh[k]; if (acc >= N / 2) { vmed = k / 100; break; } }
+      vFloor = Math.max(0.5, vmed + 0.1);
+      hist.fill(0);
+      for (let i = 0; i < N; i++) {
+        const h = hue[i];
+        if (h >= 30 && h < 70 && sat[i] >= 0.05 && val[i] >= vFloor) hist[h | 0] += 1;
+      }
+    }
+    let h0 = 44, best = 0;
     for (let k = 22; k < 66; k++) {
       let acc = 0;
       for (let j = -3; j <= 3; j++) acc += hist[k + j] || 0;
       if (acc > best) { best = acc; h0 = k + 0.5; }
     }
-    const lo = Math.max(20, h0 - 11), hi = Math.min(68, h0 + 11);
+    const lo = Math.max(20, h0 - 11), hi = Math.min(70, h0 + 11);
     // Typical saturation of this photo's gold (well-lit pixels): shadows on a warm table
     // share the hue but are far less saturated, so the cut is relative to the gold itself.
     const sh = new Uint32Array(101);
     let cnt = 0;
+    const sMin = pale ? 0.05 : 0.35;
     for (let i = 0; i < N; i++) {
       const h = hue[i];
-      if (h >= lo && h <= hi && val[i] >= 0.5 && sat[i] >= 0.35) { sh[Math.min(100, Math.round(sat[i] * 100))]++; cnt++; }
+      if (h >= lo && h <= hi && val[i] >= Math.max(0.5, vFloor) && sat[i] >= sMin) { sh[Math.min(100, Math.round(sat[i] * 100))]++; cnt++; }
     }
     let smed = 0.6;
     for (let k = 0, acc = 0; k <= 100 && cnt; k++) { acc += sh[k]; if (acc >= cnt / 2) { smed = k / 100; break; } }
-    const sThr = Math.min(0.62, Math.max(0.35, 0.72 * smed));
+    const sThr = pale ? Math.max(0.05, 0.5 * smed) : Math.min(0.62, Math.max(0.35, 0.72 * smed));
     for (let i = 0; i < N; i++) {
       const h = hue[i], sv = sat[i], v = val[i];
-      if (h >= lo && h <= hi && v >= 0.25 && (sv >= sThr || (sv >= 0.35 && v >= 0.75))) gold[i] = 1;
+      if (h < lo || h > hi || v < vFloor) continue;
+      if (sv >= sThr || (!pale && sv >= 0.35 && v >= 0.75)) gold[i] = 1;
     }
-    return { gold, bright, val, h0, sThr };
+    return { gold, bright, val, h0, sThr, pale };
   }
 
   // Separable square max filter (dilate) or min filter (erode) on a binary mask.
@@ -3664,6 +3700,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     });
     const allOk = st.slots.every((x) => x.res && x.res.ok);
     $("#btnShot").textContent = st.cur >= 0 ? `${allOk ? "Rifai" : "Scatta"}: ${SLOTS[st.cur].name}` : "Scatta foto";
+    updateModel3D();
     const how = $("#how"); how.innerHTML = "";
     const allDone = st.slots.every((s) => s.res && s.res.ok);
     if (!allDone && st.cur >= 0) {
@@ -4112,7 +4149,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const sz = res.sizes || {}, ks = [];
       if (sz.T && sz.B) ks.push(Math.abs(Math.log(sz.T.c / sz.B.c)));
       if (sz.L && sz.R) ks.push(Math.abs(Math.log(sz.L.c / sz.R.c)));
-      if (ks.length && Math.max(...ks) > 0.022) { msg = "tieni il telefono più di fronte alla faccia"; bad = true; }
+      const sq = Math.abs((res.g[1] - res.g[0]) - (res.h[1] - res.h[0])) / res.m;
+      if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12) { msg = "tieni il telefono più di fronte alla faccia"; bad = true; }
     }
     // 2) after a confirmation, wait until the cube has really been turned
     if (live.waitTurn && res.ok) {
@@ -4268,6 +4306,107 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     }
     return out;
   }
+  // Boxes from measured extents (partial model while scanning). Unknown extents get the
+  // middle-layer size and the cubelet is drawn as a grey placeholder.
+  function partialBoxes() {
+    const FV = { U: [[0, 1, 0], [1, 0, 0], [0, 0, -1]], R: [[1, 0, 0], [0, 0, -1], [0, 1, 0]], F: [[0, 0, 1], [1, 0, 0], [0, 1, 0]],
+      D: [[0, -1, 0], [1, 0, 0], [0, 0, 1]], L: [[-1, 0, 0], [0, 0, 1], [0, 1, 0]], B: [[0, 0, -1], [-1, 0, 0], [0, 1, 0]] };
+    const O = "URFDLB", half = MIDDLE / 2, dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const vals = {};
+    st.slots.forEach((sl, i) => {
+      if (!sl.res || !sl.res.ok || !sl.res.ext) return;
+      const P = SLOTS[i].face;
+      for (const nm in MirrorVision.STICKERS) for (const d of MirrorVision.STICKERS[nm][2]) {
+        const x = sl.res.ext[nm] && sl.res.ext[nm][d];
+        if (typeof x === "number") (vals[MirrorVision.TARGET[P][nm][d]] = vals[MirrorVision.TARGET[P][nm][d]] || []).push(x);
+      }
+    });
+    const idxAt = (P, pos) => { const [n, r, u] = FV[P], rel = pos.map((v, i) => v - n[i]); return O.indexOf(P) * 9 + (1 - dot(rel, u)) * 3 + 1 + dot(rel, r); };
+    const out = [];
+    let known = 0;
+    for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
+      if (!x && !y && !z) continue;
+      const pos = [x, y, z], lo = [], hi = [], stk = [];
+      let full = true;
+      for (let a = 0; a < 3; a++) {
+        if (!pos[a]) { lo.push(-half); hi.push(half); continue; }
+        const P = O.split("").find((f) => FV[f][0][a] === pos[a]);
+        const idx = idxAt(P, pos), v = vals[idx];
+        const isCentre = Math.abs(x) + Math.abs(y) + Math.abs(z) === 1;
+        let e = v ? medianOf(v) : null;
+        if (e == null && isCentre) e = null;
+        if (e == null) { full = false; e = MIDDLE; }
+        if (pos[a] > 0) { lo.push(half); hi.push(half + e); } else { lo.push(-half - e); hi.push(-half); }
+        stk.push([a, pos[a]]);
+      }
+      out.push({ lo, hi, stickers: stk, unknown: !full });
+    }
+    for (let i = 0; i < 54; i++) if (i % 9 !== 4 && vals[i]) known++;
+    return { boxes: out, pct: Math.round((100 * known) / 48) };
+  }
+
+  // Small 3D preview used while scanning.
+  const m3 = { renderer: null, scene: null, cam: null, group: null, raf: 0, ry: 0.6, rx: -0.45, drag: null, idle: 0, key: "" };
+  async function updateModel3D() {
+    const { boxes, pct } = partialBoxes();
+    $("#m3pct").textContent = `${pct}%`;
+    $("#m3bar").style.width = `${pct}%`;
+    const nf = st.slots.filter((x) => x.res && x.res.ok).length;
+    $("#m3label").textContent = nf === 0 ? "Modello 3D del cubo: si costruisce man mano che leggo le facce."
+      : nf < 6 ? `${nf} facce lette su 6. In grigio i cubetti di cui mi manca ancora qualche misura.` : "Tutte le misure raccolte: calcolo il cubo completo.";
+    const key = JSON.stringify(boxes.map((b) => [b.lo, b.hi, b.unknown]));
+    if (key === m3.key && m3.renderer) return;
+    m3.key = key;
+    try { await loadThree(); } catch (e) { return; }
+    const T = window.THREE, host = $("#m3view");
+    if (!m3.renderer) {
+      m3.renderer = new T.WebGLRenderer({ antialias: true, alpha: true });
+      m3.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      m3.renderer.setSize(150, 150);
+      m3.scene = new T.Scene();
+      m3.scene.add(new T.AmbientLight(0xffffff, 0.55));
+      const dl = new T.DirectionalLight(0xffffff, 0.6); dl.position.set(140, 240, 120); m3.scene.add(dl);
+      m3.cam = new T.PerspectiveCamera(32, 1, 1, 3000);
+      const c = m3.renderer.domElement;
+      c.addEventListener("pointerdown", (e) => { m3.drag = { x: e.clientX, y: e.clientY }; c.setPointerCapture(e.pointerId); });
+      c.addEventListener("pointermove", (e) => { if (!m3.drag) return; m3.ry += (e.clientX - m3.drag.x) * 0.012; m3.rx = Math.max(-1.4, Math.min(1.4, m3.rx + (e.clientY - m3.drag.y) * 0.012)); m3.drag = { x: e.clientX, y: e.clientY }; m3.idle = performance.now(); });
+      c.addEventListener("pointerup", () => { m3.drag = null; m3.idle = performance.now(); });
+      const tick = () => {
+        m3.raf = requestAnimationFrame(tick);
+        if (!m3.group || document.hidden || st.phase !== "scan") return;
+        if (!m3.drag && performance.now() - m3.idle > 2500) m3.ry += 0.006;
+        m3.group.rotation.set(m3.rx, m3.ry, 0);
+        m3.renderer.render(m3.scene, m3.cam);
+      };
+      tick();
+    }
+    if (!host.contains(m3.renderer.domElement)) host.append(m3.renderer.domElement);
+    if (m3.group) { m3.scene.remove(m3.group); m3.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); }
+    const g = m3.group = new T.Group();
+    const black = new T.MeshStandardMaterial({ color: 0x161616, roughness: 0.6 });
+    const gold = new T.MeshStandardMaterial({ color: 0xd8b04c, metalness: 0.35, roughness: 0.45, emissive: 0x1a1203 });
+    const ghost = new T.MeshStandardMaterial({ color: 0x6f7c86, transparent: true, opacity: 0.28, roughness: 0.8 });
+    const rim = 2.3, gap = 0.35;
+    for (const b of boxes) {
+      const size = [0, 1, 2].map((a) => b.hi[a] - b.lo[a] - gap), ctr = [0, 1, 2].map((a) => (b.hi[a] + b.lo[a]) / 2);
+      const m = new T.Mesh(new T.BoxGeometry(size[0], size[1], size[2]), b.unknown ? ghost : black);
+      m.position.set(ctr[0], ctr[1], ctr[2]); g.add(m);
+      if (b.unknown) continue;
+      for (const [a, sg] of b.stickers) {
+        const o2 = [0, 1, 2].filter((i) => i !== a), ps = [0, 0, 0];
+        ps[a] = 0.5; ps[o2[0]] = Math.max(1, size[o2[0]] - 2 * rim); ps[o2[1]] = Math.max(1, size[o2[1]] - 2 * rim);
+        const p = new T.Mesh(new T.BoxGeometry(ps[0], ps[1], ps[2]), gold);
+        const pc = ctr.slice(); pc[a] = sg > 0 ? ctr[a] + size[a] / 2 + 0.2 : ctr[a] - size[a] / 2 - 0.2;
+        p.position.set(pc[0], pc[1], pc[2]); g.add(p);
+      }
+    }
+    const bb = new T.Box3().setFromObject(g), cc = bb.getCenter(new T.Vector3()), sz = bb.getSize(new T.Vector3());
+    g.children.forEach((o) => o.position.sub(cc));
+    const rad = 0.5 * Math.sqrt(sz.x * sz.x + sz.y * sz.y + sz.z * sz.z);
+    m3.cam.position.set(0, 0, (rad / Math.tan((16 * Math.PI) / 180)) * 1.08); m3.cam.lookAt(0, 0, 0);
+    m3.scene.add(g);
+  }
+
   function stateAtStep() {
     const c = Cube.fromString(st.decoded.facelets);
     const done = st.sol.finished ? st.sol.moves : st.sol.moves.slice(0, st.sol.i);
