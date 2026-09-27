@@ -99,6 +99,9 @@ body {
 .hold { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; background: var(--sheet); border: 1px solid var(--rule); }
 .hold img { flex: none; width: 64px; height: 64px; border-radius: 4px; object-fit: cover; }
 .hold p { margin: 0; font-size: 15px; }
+.view3d { position: absolute; inset: 0; touch-action: none; }
+.view3d canvas { display: block; width: 100%; height: 100%; }
+.view3d-note { position: absolute; left: 12px; right: 12px; bottom: 12px; color: #C9D6DF; font: 500 13px/1.3 "Barlow", system-ui, sans-serif; text-align: center; pointer-events: none; }
 .live-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
 .live-tip {
   position: absolute; left: 12px; right: 12px; bottom: 14px; display: none;
@@ -222,7 +225,7 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
           <button class="btn" type="button" data-act="torch" id="btnTorch" hidden>Luce</button>
           <button class="btn" type="button" data-act="stoplive">Ferma</button>
         </div>
-        <p class="hint"><b>Dal vivo:</b> inquadri il cubo e ti guido io. Quando una faccia è letta te lo confermo e passo alla successiva: davanti, poi giri verso sinistra tre volte, poi inclini verso di te e lontano da te. Su claude.ai, nell'app o in Safari, la fotocamera dal vivo è bloccata: funziona se apri la pagina da un sito tuo. Altrimenti usa il video.</p>
+        <p class="hint"><b>Dal vivo:</b> inquadri il cubo e ti guido io. Se un tassello è nascosto da un pezzo sporgente lo segno con una X rossa: sposta un po' il telefono attorno alla faccia finché sparisce. Quando una faccia è letta te lo confermo e passo alla successiva: davanti, poi giri verso sinistra tre volte, poi inclini verso di te e lontano da te. Su claude.ai, nell'app o in Safari, la fotocamera dal vivo è bloccata: funziona se apri la pagina da un sito tuo. Altrimenti usa il video.</p>
         <p class="hint"><b>Con il video:</b> attiva il flash, tieni il telefono a circa 30 cm e fermati un secondo su ogni faccia. Davanti, poi gira il cubo verso sinistra tre volte (destra, dietro, sinistra). Torna davanti e inclinalo verso di te (sopra), torna davanti e inclinalo lontano da te (sotto). Le facce le trovo io. Se il pulsante non apre la fotocamera, registra con l'app Fotocamera e poi usa «Carica foto o video».</p>
         <p class="hint">Telefono parallelo alla faccia, a circa 30 cm e senza zoom, con tutta la faccia nella foto e un po' di margine intorno.</p>
 
@@ -241,6 +244,9 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
         <ol class="chips" id="chips"></ol>
         <p class="hint">Non girare il cubo in mano tra una mossa e l'altra: i centri restano fermi e le mosse contano su questo.</p>
         <p class="note" id="solveNote"></p>
+        <div class="actions">
+          <button class="btn wide" type="button" data-act="view3d" id="btn3d">Vedi il cubo in 3D</button>
+        </div>
         <div class="actions">
           <button class="btn" type="button" data-act="back">Torna alle foto</button>
           <button class="btn" type="button" data-act="rescan">Nuova mescolata</button>
@@ -2841,7 +2847,8 @@ const MirrorVision = (() => {
   // Measures one face of a (possibly scrambled) cube photographed head-on:
   // for every border sticker, how far the piece reaches past the cut planes,
   // in % of the cube side (the middle layer is the ruler).
-  function analyzeScrambled(img, W, H, middle = 33.6) {
+  function analyzeScrambled(img, W, H, middle = 33.6, opts = {}) {
+    const maxMissing = opts.maxMissing != null ? opts.maxMissing : 1;
     const P = prepare(img, W, H);
     if (!P) return { ok: false, why: "nogold" };
     const { cs, sn, uMin, vMin, Lu, Lv, isPanel } = P;
@@ -2969,7 +2976,7 @@ const MirrorVision = (() => {
     }
     const res = Object.assign(base, { g: [g1, g2], h: [h1, h2], m, gw, ext, px, sizes });
     const missing = base.badAt ? base.badAt.length : 0;
-    if (bad === "cut" || missing > 1) return Object.assign(res, { ok: false, why: bad });
+    if (bad === "cut" || missing > maxMissing) return Object.assign(res, { ok: false, why: bad });
     res.missing = missing;
     // cut: a measured outer boundary on (or past) the frame border
     const corners = [];
@@ -3237,7 +3244,7 @@ const MirrorVision = (() => {
 
   const ROT90 = { TL: "TR", T: "R", TR: "BR", R: "B", BR: "BL", B: "L", BL: "TL", L: "T" };
   const DIR90 = { up: "right", right: "down", down: "left", left: "up" };
-  function sameFace(a, b) {
+  function sameFace(a, b, minCommon = 8) {
     if (!a || !b || !a.ext || !b.ext) return Infinity;
     let best = Infinity;
     let cur = a.ext;
@@ -3247,7 +3254,7 @@ const MirrorVision = (() => {
         const y = b.ext[nm] && b.ext[nm][d];
         if (typeof y === "number") { s += Math.abs(cur[nm][d] - y); n++; }
       }
-      if (n >= 8) best = Math.min(best, s / n);
+      if (n >= minCommon) best = Math.min(best, s / n);
       const nx = {};
       for (const nm in cur) { nx[ROT90[nm]] = {}; for (const d in cur[nm]) nx[ROT90[nm]][DIR90[d]] = cur[nm][d]; }
       cur = nx;
@@ -3295,6 +3302,76 @@ const MirrorVision = (() => {
     return Object.assign(d, { layout: { swap: best.swap, ku: best.ku, kd: best.kd } });
   }
 
+  // Six face readings in any order and any rotation: the first one is the front (it defines
+  // how the cube is held), the other five are placed where they fit. Every corner piece is
+  // measured on two neighbouring faces, and the two measurements must agree: that alone
+  // tells which face sits next to which, and turned how. Then the full decode runs on the
+  // few best layouts and the best cube wins.
+  const MLIST = [];
+  for (const nm in STICKERS) for (const d of STICKERS[nm][2]) MLIST.push([nm, d]);
+  const MIDX = {};
+  MLIST.forEach(([nm, d], i) => { MIDX[nm + "." + d] = i; });
+  const PAIRS = (() => {
+    const by = {};
+    for (const P of ORDER) for (const nm in STICKERS) for (const d of STICKERS[nm][2]) {
+      const t = TARGET[P][nm][d];
+      (by[t] = by[t] || []).push([P, MIDX[nm + "." + d]]);
+    }
+    return Object.values(by).filter((l) => l.length === 2);
+  })();
+  function measVector(r) {
+    return MLIST.map(([nm, d]) => (r && r.ext && r.ext[nm] && typeof r.ext[nm][d] === "number" ? r.ext[nm][d] : NaN));
+  }
+  function decodeFree(list, cls) {
+    const others = ["R", "B", "L", "U", "D"];
+    const rot = list.map((r) => [0, 1, 2, 3].map((k) => rotateReading(r, k)));
+    const vec = rot.map((rs) => rs.map(measVector));
+    const hub = (x) => { const a = Math.abs(x); return a <= 4 ? a * a : 8 * a - 16; };
+    const perms = [];
+    const permute = (arr, pre) => { if (!arr.length) { perms.push(pre); return; } arr.forEach((x, i) => permute(arr.slice(0, i).concat(arr.slice(i + 1)), pre.concat([x]))); };
+    permute([1, 2, 3, 4, 5], []);
+    const top = [];
+    const keep = 12;
+    const faceIdx = { F: 0, R: 1, B: 2, L: 3, U: 4, D: 5 };
+    for (const perm of perms) {
+      for (let code = 0; code < 1024; code++) {
+        const pick = [vec[0][0]];
+        for (let i = 0; i < 5; i++) pick.push(vec[perm[i]][(code >> (2 * i)) & 3]);
+        let cost = 0, n = 0;
+        for (const [[P1, i1], [P2, i2]] of PAIRS) {
+          const a = pick[faceIdx[P1]][i1], b = pick[faceIdx[P2]][i2];
+          if (a === a && b === b) { cost += hub(a - b); n++; }
+        }
+        if (n < 12) continue;
+        const c = cost / n;
+        if (top.length < keep || c < top[top.length - 1].c) {
+          top.push({ c, perm, code });
+          top.sort((x, y) => x.c - y.c);
+          if (top.length > keep) top.pop();
+        }
+      }
+    }
+    // full check of the best layouts with the piece decoder
+    const b1 = { U: cls.A[0], D: cls.A[1], F: cls.B[0], B: cls.B[1], R: cls.C[0], L: cls.C[1] };
+    const b2 = Object.assign({}, b1, { R: cls.C[1], L: cls.C[0] });
+    const id = { U: "U", R: "R", F: "F", D: "D", L: "L", B: "B" }, y = { F: "L", L: "B", B: "R", R: "F", U: "U", D: "D" };
+    const reps = [];
+    for (const base of [b1, b2]) for (const rr of [id, y]) { const th = {}; for (const P of ORDER) th[rr[P]] = base[P]; reps.push(th); }
+    let best = null;
+    for (const t of top) {
+      const f = { F: rot[0][0] };
+      others.forEach((P, i) => { f[P] = rot[t.perm[i]][(t.code >> (2 * i)) & 3]; });
+      let c = Infinity;
+      for (const th of reps) c = Math.min(c, decode(f, th).cost);
+      if (!best || c < best.c) best = { c, f, t };
+    }
+    const d = decodeAuto(best.f, cls);
+    const placed = { F: 0 };
+    others.forEach((P, i) => { placed[P] = best.t.perm[i]; });
+    const second = top.find((t) => t !== best.t);
+    return Object.assign(d, { layout: { placed, pairCost: best.t.c, secondPairCost: second ? second.c : Infinity } });
+  }
+
   // Profile coordinates (u', v') back to image pixel coordinates.
   function toImage(res, up, vp) {
     const u = up + res.uMin, v = vp + res.vMin;
@@ -3336,7 +3413,7 @@ const MirrorVision = (() => {
     });
   }
 
-  return { analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, rotateReading, sameFace, ROTS, TARGET, STICKERS };
+  return { analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, rotateReading, sameFace, ROTS, TARGET, STICKERS };
 })();
 
 if (typeof module !== "undefined") module.exports = MirrorVision;
@@ -3481,8 +3558,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
     art.innerHTML = "";
     if (st.phase === "solve" && st.sol) {
+      if (v3.on) { open3D(); return; }
       const m = st.sol.moves[st.sol.i];
-      if (m) art.innerHTML = moveSVG(m, THICK0);
+      if (m) art.innerHTML = moveSVG(m, (st.decoded && st.decoded.thick) || THICK0);
       return;
     }
     if (st.phase !== "scan") return;
@@ -3535,6 +3613,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
 
   // ---------- phases ----------
   function setPhase(p) {
+    if (p !== "solve" && v3.on) { close3D(); $("#btn3d").textContent = "Vedi il cubo in 3D"; }
     st.phase = p; app.dataset.phase = p;
     const on = { scan: 0, solve: 1 }[p];
     [...$("#steps").children].forEach((li, i) => { li.className = i === on ? "on" : i < on ? "done" : ""; });
@@ -3712,9 +3791,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       setPill("warn", "Rifai una foto");
       return;
     }
-    const d = MirrorVision.decodeFlexible(faces, CLS);
+    // The faces may have been shown in any order and turned any way: the first one is the
+    // front, the rest are placed where the shared corners fit.
+    const d = MirrorVision.decodeFree(st.slots.map((x) => x.res), CLS);
+    d.slotOf = (letter) => d.layout.placed[letter];
     st.decoded = d;
-    const wk = SLOTS.findIndex((x) => x.face === d.worstFrom);
+    const wk = d.slotOf(d.worstFrom);
     st.slots.forEach((x, j) => { x.warn = d.worst > 5 && j === wk; });
     renderScan();
     // Only a real ambiguity (which face is which) stops here. One odd measurement does not:
@@ -3871,7 +3953,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   function makeWorker() {
     try {
       const core = document.getElementById("core-src").textContent;
-      const src = core + "\nself.onmessage = function (e) { var d = e.data; var r = MirrorVision.analyzeScrambled(new Uint8ClampedArray(d.buf), d.w, d.h, 33.6); self.postMessage({ id: d.id, res: r }); };";
+      const src = core + "\nself.onmessage = function (e) { var d = e.data; var r = MirrorVision.analyzeScrambled(new Uint8ClampedArray(d.buf), d.w, d.h, 33.6, { maxMissing: 5 }); self.postMessage({ id: d.id, res: r }); };";
       const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
       w.onmessage = (e) => onLiveResult(e.data.id, e.data.res);
       w.onerror = () => { live.worker = null; live.busy = false; };
@@ -3968,7 +4050,35 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     live.jobs[id] = { roi, k, crop: c, t: now };
     live.busy = true;
     if (live.worker) live.worker.postMessage({ id, buf: img.data.buffer, w: pw, h: ph }, [img.data.buffer]);
-    else setTimeout(() => onLiveResult(id, MirrorVision.analyzeScrambled(img.data, pw, ph, MIDDLE)), 0);
+    else setTimeout(() => onLiveResult(id, MirrorVision.analyzeScrambled(img.data, pw, ph, MIDDLE, { maxMissing: 5 })), 0);
+  }
+
+  const MEAS = [];
+  for (const nm in MirrorVision.STICKERS) for (const d of MirrorVision.STICKERS[nm][2]) MEAS.push([nm, d]);
+  function coverage(reads) {
+    let full = 0;
+    const missing = new Set();
+    for (const [nm, d] of MEAS) {
+      const n = reads.filter((r) => r.ext && r.ext[nm] && typeof r.ext[nm][d] === "number").length;
+      if (n >= 2) full++; else missing.add(nm);
+    }
+    return { full, missing };
+  }
+  function drawMissing(r, map, missing) {
+    if (!missing || !missing.size || !r.g) return;
+    const [g1, g2] = r.g, [h1, h2] = r.h, m = g2 - g1, o = 0.45 * m, cu = 0.5 * (g1 + g2), cv = 0.5 * (h1 + h2);
+    const pos = { TL: [g1 - o, h1 - o], T: [cu, h1 - o], TR: [g2 + o, h1 - o], L: [g1 - o, cv], R: [g2 + o, cv], BL: [g1 - o, h2 + o], B: [cu, h2 + o], BR: [g2 + o, h2 + o] };
+    ctx.save();
+    ctx.lineCap = "round";
+    for (const nm of missing) {
+      const q = MirrorVision.toImage(r, pos[nm][0], pos[nm][1]);
+      const [x, y] = map(q[0], q[1]), d = 9 * dpr;
+      for (const [col, w] of [["rgba(0,0,0,.55)", 6], [BAD, 3]]) {
+        ctx.strokeStyle = col; ctx.lineWidth = w * dpr;
+        ctx.beginPath(); ctx.moveTo(x - d, y - d); ctx.lineTo(x + d, y + d); ctx.moveTo(x + d, y - d); ctx.lineTo(x - d, y + d); ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   function consistent(reads) {
@@ -3996,18 +4106,49 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       live.roiT = now;
       if (Math.max(bw, bh) < 0.18 * Math.min(v.videoWidth, v.videoHeight)) { msg = "avvicinati un po', a circa 30 cm"; bad = true; }
     }
+    // Readings that look like a face already confirmed: the cube has not been turned yet.
+    const already = (x, thr) => st.slots.findIndex((o, j) => j !== slot && o.res && o.res.ok && MirrorVision.sameFace(x, o.res, 6) < thr);
     if (res.ok && !msg) {
-      const twin = st.slots.findIndex((o, j) => j !== slot && o.res && o.res.ok && MirrorVision.sameFace(res, o.res) < 3);
-      if (twin >= 0) { msg = `questa è «${SLOTS[twin].name}», già letta`; bad = true; live.cand = null; }
+      const sz = res.sizes || {}, ks = [];
+      if (sz.T && sz.B) ks.push(Math.abs(Math.log(sz.T.c / sz.B.c)));
+      if (sz.L && sz.R) ks.push(Math.abs(Math.log(sz.L.c / sz.R.c)));
+      if (ks.length && Math.max(...ks) > 0.022) { msg = "tieni il telefono più di fronte alla faccia"; bad = true; }
+    }
+    // 2) after a confirmation, wait until the cube has really been turned
+    if (live.waitTurn && res.ok) {
+      const prev = st.slots[live.waitTurn.slot].res;
+      if (MirrorVision.sameFace(res, prev, 6) < 7) { live.waitTurn.seen = now; if (!msg) msg = "girato? Mostrami la faccia successiva"; bad = true; }
+      else live.waitTurn = null;
+    } else if (live.waitTurn && now - live.waitTurn.seen > 250) live.waitTurn = null;
+    if (res.ok && !msg) {
+      const twin = already(res, 5);
+      if (twin >= 0) { msg = `questa è «${SLOTS[twin].name}», già letta`; bad = true; }
     }
     if (!bad) {
-      let c = live.cand;
-      if (!c || MirrorVision.sameFace(res, c.ref) >= 3) c = live.cand = { ref: res, reads: [], t0: now, last: now };
-      c.reads.push(res); c.last = now;
-      if (c.reads.length > 12) c.reads.shift();
-      c.frac = Math.min(c.reads.length / WINDOW_READS, (now - c.t0) / WINDOW_MS);
-      if (c.frac >= 1 && consistent(c.reads)) { live.last = res; confirmLive(c, job); return; }
-      msg = "tieni fermo…";
+      // Vote among the recent views: the face is the largest group of readings that agree
+      // with each other. A single wrong reading (odd angle, reflection) cannot win the vote.
+      live.recent = (live.recent || []).filter((x) => now - x.t < 1600);
+      live.recent.push({ res, t: now });
+      let group = [];
+      for (const a of live.recent) {
+        const g = live.recent.filter((b) => MirrorVision.sameFace(a.res, b.res, 6) < 3.5);
+        if (g.length > group.length) group = g;
+      }
+      const reads = group.map((x) => x.res);
+      const c = live.cand = { reads, merged: mergeReadings(reads), cov: coverage(reads) };
+      const span = group.length ? group[group.length - 1].t - group[0].t : 0;
+      c.frac = Math.min(reads.length / WINDOW_READS, span / WINDOW_MS, c.cov.full / MEAS.length);
+      if (c.frac >= 1 && consistent(reads)) {
+        const twin = already(c.merged, 5);
+        if (twin >= 0) { live.recent = []; live.cand = null; live.last = res; live.tip = `${SLOTS[slot].live} (questa è «${SLOTS[twin].name}», già letta)`; return; }
+        const done = slot;
+        live.last = res; confirmLive(c, job); live.recent = [];
+        live.waitTurn = { slot: done, seen: now };
+        return;
+      }
+      msg = c.cov.full < MEAS.length && span > 900
+        ? "alcuni tasselli sono nascosti: sposta un po' il telefono attorno alla faccia"
+        : "tieni fermo…";
     } else {
       if (!msg) msg = liveHint(res);
       if (live.cand && now - live.cand.last > LOSE_MS) live.cand = null;
@@ -4047,7 +4188,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const map = (x, y) => [(j.roi.x + x / j.k) * s + ox, (j.roi.y + y / j.k) * s + oy];
       const good = r.ok && live.cand && live.cand.reads.includes(r);
       drawReading(r, map, !good);
-      if (good) drawProgress(r, map, live.cand.frac || 0);
+      if (good) { drawMissing(r, map, live.cand.cov && live.cand.cov.missing); drawProgress(r, map, live.cand.frac || 0); }
     }
     drawMiniMap();
     const tip = $("#liveTip");
@@ -4070,7 +4211,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
 
   function confirmLive(c, job) {
-    const slot = st.cur, lastRes = c.reads[c.reads.length - 1];
+    const slot = st.cur, lastRes = c.reads.slice().sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
     const merged = mergeReadings(c.reads);
     const final = Object.assign({}, lastRes, merged, { ok: true, missing: lastRes.missing || 0 });
     delete final.job;
@@ -4091,6 +4232,116 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       live.tip = `Fatto. ${SLOTS[st.cur].live}`;
     }
   }
+
+  // ---------- 3D view: the cube as it has been reconstructed ----------
+  // Every cubelet is drawn with its real size along each axis, so pieces stick out or sink
+  // exactly as on the real cube. It shows the state before the current move.
+  const v3 = { on: false, renderer: null, scene: null, cam: null, group: null, raf: 0, rx: -0.45, ry: 0.65, drag: null, idle: 0 };
+  function loadThree() {
+    if (window.THREE) return Promise.resolve();
+    return new Promise((res, rej) => {
+      const sc = document.createElement("script");
+      sc.src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
+      sc.onload = res; sc.onerror = rej; document.head.append(sc);
+    });
+  }
+  function cubeBoxes(facelets, thick) {
+    const FV = { U: [[0, 1, 0], [1, 0, 0], [0, 0, -1]], R: [[1, 0, 0], [0, 0, -1], [0, 1, 0]], F: [[0, 0, 1], [1, 0, 0], [0, 1, 0]],
+      D: [[0, -1, 0], [1, 0, 0], [0, 0, 1]], L: [[-1, 0, 0], [0, 0, 1], [0, 1, 0]], B: [[0, 0, -1], [-1, 0, 0], [0, 1, 0]] };
+    const O = "URFDLB", half = MIDDLE / 2, dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const faceOf = (ax, sg) => O.split("").find((P) => FV[P][0][ax] === sg);
+    const letterAt = (P, pos) => {
+      const [n, r, u] = FV[P], rel = pos.map((v, i) => v - n[i]);
+      return facelets[O.indexOf(P) * 9 + (1 - dot(rel, u)) * 3 + 1 + dot(rel, r)];
+    };
+    const out = [];
+    for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
+      if (!x && !y && !z) continue;
+      const pos = [x, y, z], lo = [], hi = [], st2 = [];
+      for (let a = 0; a < 3; a++) {
+        if (!pos[a]) { lo.push(-half); hi.push(half); continue; }
+        const e = thick[letterAt(faceOf(a, pos[a]), pos)];
+        if (pos[a] > 0) { lo.push(half); hi.push(half + e); } else { lo.push(-half - e); hi.push(-half); }
+        st2.push([a, pos[a]]);
+      }
+      out.push({ lo, hi, stickers: st2 });
+    }
+    return out;
+  }
+  function stateAtStep() {
+    const c = Cube.fromString(st.decoded.facelets);
+    const done = st.sol.finished ? st.sol.moves : st.sol.moves.slice(0, st.sol.i);
+    if (done.length) c.move(done.join(" "));
+    return c.asString();
+  }
+  function build3D() {
+    const T = window.THREE;
+    if (v3.group) { v3.scene.remove(v3.group); v3.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); }
+    const g = v3.group = new T.Group();
+    const black = new T.MeshStandardMaterial({ color: 0x161616, roughness: 0.6 });
+    const gold = new T.MeshStandardMaterial({ color: 0xd8b04c, metalness: 0.35, roughness: 0.45, emissive: 0x1a1203 });
+    const rim = 2.3, gap = 0.35;
+    for (const b of cubeBoxes(stateAtStep(), st.decoded.thick)) {
+      const size = [0, 1, 2].map((a) => b.hi[a] - b.lo[a] - gap), ctr = [0, 1, 2].map((a) => (b.hi[a] + b.lo[a]) / 2);
+      const m = new T.Mesh(new T.BoxGeometry(size[0], size[1], size[2]), black);
+      m.position.set(ctr[0], ctr[1], ctr[2]); g.add(m);
+      for (const [a, sg] of b.stickers) {
+        const o2 = [0, 1, 2].filter((i) => i !== a), ps = [0, 0, 0];
+        ps[a] = 0.5; ps[o2[0]] = Math.max(1, size[o2[0]] - 2 * rim); ps[o2[1]] = Math.max(1, size[o2[1]] - 2 * rim);
+        const p = new T.Mesh(new T.BoxGeometry(ps[0], ps[1], ps[2]), gold);
+        const pc = ctr.slice(); pc[a] = sg > 0 ? ctr[a] + size[a] / 2 + 0.2 : ctr[a] - size[a] / 2 - 0.2;
+        p.position.set(pc[0], pc[1], pc[2]); g.add(p);
+      }
+    }
+    // centre the view on the cube itself (its core is off-centre) and fit it in the frame
+    const bb = new T.Box3().setFromObject(g), c = bb.getCenter(new T.Vector3()), sz = bb.getSize(new T.Vector3());
+    g.children.forEach((o) => o.position.sub(c));
+    v3.radius = 0.5 * Math.sqrt(sz.x * sz.x + sz.y * sz.y + sz.z * sz.z);
+    v3.scene.add(g);
+  }
+  async function open3D() {
+    try { await loadThree(); } catch (e) { toast("Non riesco a caricare la vista 3D"); v3.on = false; return; }
+    const T = window.THREE;
+    art.innerHTML = "";
+    const box = document.createElement("div"); box.className = "view3d";
+    art.append(box);
+    const W = wrap.clientWidth, H = wrap.clientHeight;
+    if (!v3.renderer) {
+      v3.renderer = new T.WebGLRenderer({ antialias: true, alpha: true });
+      v3.scene = new T.Scene();
+      v3.scene.add(new T.AmbientLight(0xffffff, 0.55));
+      const dl = new T.DirectionalLight(0xffffff, 0.6); dl.position.set(140, 240, 120); v3.scene.add(dl);
+      const dl2 = new T.DirectionalLight(0xffffff, 0.35); dl2.position.set(-160, -60, -120); v3.scene.add(dl2);
+      v3.cam = new T.PerspectiveCamera(32, 1, 1, 3000);
+      const el3 = v3.renderer.domElement;
+      el3.addEventListener("pointerdown", (e) => { v3.drag = { x: e.clientX, y: e.clientY }; el3.setPointerCapture(e.pointerId); });
+      el3.addEventListener("pointermove", (e) => {
+        if (!v3.drag) return;
+        v3.ry += (e.clientX - v3.drag.x) * 0.01; v3.rx += (e.clientY - v3.drag.y) * 0.01;
+        v3.rx = Math.max(-1.4, Math.min(1.4, v3.rx)); v3.drag = { x: e.clientX, y: e.clientY }; v3.idle = performance.now();
+      });
+      el3.addEventListener("pointerup", () => { v3.drag = null; v3.idle = performance.now(); });
+    }
+    v3.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    v3.renderer.setSize(W, H);
+    v3.cam.aspect = W / H; v3.cam.updateProjectionMatrix();
+    box.append(v3.renderer.domElement);
+    const note = el("div", "view3d-note", "Il cubo come l'ho ricostruito, prima della mossa indicata. Trascina per ruotarlo.");
+    box.append(note);
+    build3D();
+    const fit = Math.max(1, (v3.radius || 90) / Math.tan((16 * Math.PI) / 180)) * (W < H ? 1.35 : 1.1);
+    v3.cam.position.set(0, 0, fit); v3.cam.lookAt(0, 0, 0);
+    cancelAnimationFrame(v3.raf);
+    const tick = () => {
+      if (!v3.on) return;
+      v3.raf = requestAnimationFrame(tick);
+      if (!v3.drag && performance.now() - v3.idle > 2500) v3.ry += 0.004;
+      v3.group.rotation.set(v3.rx, v3.ry, 0);
+      v3.renderer.render(v3.scene, v3.cam);
+    };
+    tick();
+  }
+  function close3D() { v3.on = false; cancelAnimationFrame(v3.raf); }
 
   // ---------- solver ----------
   function warmSolver() {
@@ -4157,7 +4408,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const fix = $("#fixBox"); fix.textContent = "";
     const dd = st.decoded;
     if (dd && dd.worst > 6 && s.i === 0 && !s.finished) {
-      const k = SLOTS.findIndex((x) => x.face === dd.worstFrom);
+      const k = dd.slotOf ? dd.slotOf(dd.worstFrom) : SLOTS.findIndex((x) => x.face === dd.worstFrom);
       const box = el("div", "fix");
       box.append(el("p", "", `Prima di iniziare: la foto «${SLOTS[k].name}» non mi convince del tutto. Puoi rifarla ora, le altre restano. Oppure inizia pure: di solito la soluzione è giusta lo stesso.`));
       const acts = el("div", "actions");
@@ -4223,6 +4474,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     else if (act === "back") backToScan(st.slots.findIndex((x) => x.warn) >= 0 ? st.slots.findIndex((x) => x.warn) : 0);
     else if (act === "video") vidIn.click();
     else if (act === "live") startLive();
+    else if (act === "view3d") {
+      v3.on = !v3.on;
+      $("#btn3d").textContent = v3.on ? "Torna al disegno della mossa" : "Vedi il cubo in 3D";
+      if (!v3.on) close3D();
+      drawStage();
+    }
     else if (act === "stoplive") stopLive();
     else if (act === "torch" && live.track) {
       live.torch = !live.torch;
@@ -4247,6 +4504,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     renderSolve(); drawStage();
   });
 
+  // diagnostics: the readings of the six faces (used when checking the scan)
+  window.__calibroReadings = () => st.slots.map((x) => x.res && x.res.ext ? { ext: x.res.ext, sizes: x.res.sizes, frames: x.res.frames } : null);
   newScan();
   sizeStage();
   setTimeout(warmSolver, 1500);
