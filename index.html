@@ -252,6 +252,8 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
         <p class="hint">Telefono parallelo alla faccia, a circa 30 cm e senza zoom, con tutta la faccia nella foto e un po' di margine intorno.</p>
 
         <div id="scanResult"></div>
+        <div class="actions"><button class="btn" type="button" data-act="export">Salva i dati della scansione</button></div>
+        <div id="exportBoxScan"></div>
       </section>
 
       <section class="view" id="vSolve">
@@ -3875,7 +3877,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
 
   function newScan() {
-    st.rechecks = null; st.round = 0; st.lastCheck = null;
+    st.rechecks = null; st.round = 0; st.lastCheck = null; st.flagged = null; st.allSince = 0;
     st.slots = SLOTS.map((s) => ({ face: s.face, c: null, res: null, thumb: null }));
     st.cur = 0; st.still = null; st.decoded = null;
     $("#scanResult").innerHTML = "";
@@ -4381,7 +4383,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (sz.T && sz.B) ks.push(Math.abs(Math.log(sz.T.c / sz.B.c)));
       if (sz.L && sz.R) ks.push(Math.abs(Math.log(sz.L.c / sz.R.c)));
       const sq = Math.abs((res.g[1] - res.g[0]) - (res.h[1] - res.h[0])) / res.m;
-      if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12) { msg = "tieni il telefono più di fronte alla faccia"; bad = true; }
+      const fl = Object.values(res.edges || {}).map((b) => b.n / Math.max(1, (b.u1 - b.u0 + 1) * (b.v1 - b.v0 + 1))).sort((a, b) => a - b);
+      const oblique = fl.length < 5 || fl[fl.length >> 1] < 0.8 || fl[0] < 0.7;
+      if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12 || oblique) { collectTurned(res, now); msg = "continua a ruotare piano"; bad = true; }
     }
     // 2) after a confirmation, wait until the cube has really been turned
     if (live.waitTurn && res.ok) {
@@ -4391,7 +4395,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     } else if (live.waitTurn && now - live.waitTurn.seen > 250) live.waitTurn = null;
     if (res.ok && !msg) {
       const twin = already(res, 5);
-      if (twin >= 0) { msg = `questa è «${SLOTS[twin].name}», già letta`; bad = true; }
+      if (twin >= 0) {
+        live.lastFace = { slot: twin, t: now };
+        if (!(st.flagged && st.flagged.has(twin))) { collectTurned(res, now); msg = `«${SLOTS[twin].name}» l'ho già vista: continua a ruotare`; bad = true; }
+        else if (st.cur !== twin) { st.cur = twin; live.recent = []; }
+      }
     }
     if (!bad) {
       // Vote among the recent views: the face is the largest group of readings that agree
@@ -4409,7 +4417,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       c.frac = Math.min(reads.length / WINDOW_READS, span / WINDOW_MS, c.cov.full / MEAS.length);
       if (c.frac >= 1 && consistent(reads)) {
         const twin = already(c.merged, 5);
-        if (twin >= 0) { live.recent = []; live.cand = null; live.last = res; live.tip = `${SLOTS[slot].live} (questa è «${SLOTS[twin].name}», già letta)`; return; }
+        if (twin >= 0) { live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: twin, t: now }; return; }
         const done = slot;
         live.last = res; confirmLive(c, job); live.recent = [];
         live.waitTurn = { slot: done, seen: now };
@@ -4491,21 +4499,42 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     beep(); flash();
     const fr = c.reads.filter((r) => r.edges && r.edges.C).sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
     renderScan();
-    if (fr) {
-      live.turnPh = { slot, front: { res: { g: fr.g, h: fr.h }, edges: fr.edges }, views: [], axes: { u: 0, v: 0 }, t0: performance.now(), lastT: 0, frac: 0 };
-      toast(`${SLOTS[slot].name} letta di fronte. Ora ruotala un po' di lato`);
-      live.tip = `${SLOTS[slot].name}: ora ruota piano il cubo di lato, circa 20 gradi, a sinistra, a destra, in su e in giù`;
-    } else {
-      toast(`${SLOTS[slot].name} letta`);
-      advanceLive(slot);
-    }
+    st.slots[slot].res.plx = { front: fr ? { res: { g: fr.g, h: fr.h }, edges: fr.edges } : null, turned: [] };
+    if (st.flagged) st.flagged.delete(slot);
+    live.lastFace = { slot, t: performance.now() };
+    toast(`Faccia vista: ${SLOTS[slot].name}`);
+    advanceLive(slot);
+  }
+  // Turned views of the face that was just in front of the camera: they give the parallax.
+  function collectTurned(res, now) {
+    const lf = live.lastFace;
+    if (!lf || now - lf.t > 2500 || !res.g || !res.edges || !res.edges.C) return;
+    const sl = st.slots[lf.slot], px = sl.res && sl.res.plx;
+    if (!px || !px.front || px.turned.length >= 8 || now - (px.lastT || 0) < 200) return;
+    const pv = MirrorVision.parallaxView(px.front, { res: { g: res.g, h: res.h }, edges: res.edges });
+    if (!pv) return;
+    const deg = (Math.acos(Math.max(-1, Math.min(1, pv.cosEst))) * 180) / Math.PI;
+    if (deg < 8 || deg > 34) return;
+    if (res.ok && MirrorVision.sameFace(res, sl.res, 6) > 9) return;
+    px.turned.push({ res: { g: res.g, h: res.h }, edges: res.edges });
+    px.lastT = now;
+    if (px.turned.length === 2) renderScan();
+    maybeCheck(now);
+  }
+  // With all six faces and a few side views each, check the whole cube.
+  function maybeCheck(now) {
+    if (nextOpen(-1) >= 0) return;
+    const ready = st.slots.every((x) => x.res && x.res.plx && (x.res.plx.turned.length >= 2 || !x.res.plx.front));
+    st.allSince = st.allSince || now;
+    if ((ready || now - st.allSince > 15000) && !(st.flagged && st.flagged.size)) liveCheck();
   }
   function advanceLive(slot) {
     live.waitTurn = { slot, seen: performance.now() };
     st.cur = nextOpen(slot);
     renderScan();
-    if (st.cur < 0) liveCheck();
-    else live.tip = `Fatto. ${SLOTS[st.cur].live}`;
+    if (st.cur < 0) { st.cur = st.flagged && st.flagged.size ? [...st.flagged][0] : 0; maybeCheck(performance.now()); }
+    live.tip = nextOpen(-1) >= 0 ? "Continua a ruotare piano il cubo: mostrami le facce che mancano, anche un po' di lato"
+      : "Ho tutte le facce: continua a ruotare piano, raccolgo le viste di lato";
   }
   function handleTurn(res, now) {
     const T = live.turnPh;
@@ -4563,12 +4592,14 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     st.lastCheck = { key, slot: k >= 0 ? k : null };
     if (k >= 0 && st.round <= 4) {
       st.rechecks[k]++;
+      st.flagged = new Set([k]);
+      st.allSince = 0;
       st.cur = k;
       st.slots.forEach((x, j) => { x.warn = j === k; });
       renderScan();
       setPill("warn", `Da ricontrollare: ${SLOTS[k].name}`);
       toast(`Qualcosa non torna sulla faccia «${SLOTS[k].name}»`);
-      live.tip = `Qualcosa non torna su «${SLOTS[k].name}»: mostramela di nuovo di fronte, poi ruotala di lato`;
+      live.tip = `Un pezzo non torna: continua a ruotare, voglio rivedere «${SLOTS[k].name}» (in rosso)`;
       return;
     }
     stopLive();
@@ -4661,7 +4692,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     $("#m3bar").style.width = `${pct}%`;
     const nf = st.slots.filter((x) => x.res && x.res.ok).length;
     $("#m3label").textContent = nf === 0 ? "Modello 3D del cubo: si costruisce man mano che leggo le facce."
-      : nf < 6 ? `${nf} facce lette su 6. In grigio i cubetti di cui mi manca ancora qualche misura.` : "Tutte le misure raccolte: calcolo il cubo completo.";
+      : nf < 6 ? `${nf} facce viste su 6. I pezzi a punti aspettano ancora qualche misura: continua a ruotare.` : "Tutte le facce viste: raccolgo le viste di lato e controllo il cubo.";
     const key = JSON.stringify(boxes.map((b) => [b.lo, b.hi, b.unknown]));
     if (key === m3.key && m3.renderer) return;
     m3.key = key;
@@ -4697,9 +4728,16 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const rim = 2.3, gap = 0.35;
     for (const b of boxes) {
       const size = [0, 1, 2].map((a) => b.hi[a] - b.lo[a] - gap), ctr = [0, 1, 2].map((a) => (b.hi[a] + b.lo[a]) / 2);
-      const m = new T.Mesh(new T.BoxGeometry(size[0], size[1], size[2]), b.unknown ? ghost : black);
+      if (b.unknown) {
+        const pts = [];
+        for (const x of [b.lo[0], b.hi[0]]) for (const y of [b.lo[1], b.hi[1]]) for (const z of [b.lo[2], b.hi[2]]) pts.push(x, y, z);
+        const geo = new T.BufferGeometry();
+        geo.setAttribute("position", new T.Float32BufferAttribute(pts, 3));
+        g.add(new T.Points(geo, new T.PointsMaterial({ color: 0xf0d27a, size: 3.2 })));
+        continue;
+      }
+      const m = new T.Mesh(new T.BoxGeometry(size[0], size[1], size[2]), black);
       m.position.set(ctr[0], ctr[1], ctr[2]); g.add(m);
-      if (b.unknown) continue;
       for (const [a, sg] of b.stickers) {
         const o2 = [0, 1, 2].filter((i) => i !== a), ps = [0, 0, 0];
         ps[a] = 0.5; ps[o2[0]] = Math.max(1, size[o2[0]] - 2 * rim); ps[o2[1]] = Math.max(1, size[o2[1]] - 2 * rim);
@@ -4824,7 +4862,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       ];
       rows.forEach((t, r) => { for (let q = 0; q < t.length; q += 95) g.fillText(t.slice(q, q + 95), 20, y0 + r * 44 + (q / 95) * 20); });
     }
-    const box = $("#exportBox"); box.innerHTML = "";
+    const box = st.phase === "solve" ? $("#exportBox") : $("#exportBoxScan"); box.innerHTML = "";
     const img = el("img"); img.src = c.toDataURL("image/png"); img.alt = "Dati della scansione"; img.style.width = "100%"; img.style.borderRadius = "8px";
     box.append(el("p", "hint", "Tieni premuta l'immagine e scegli «Aggiungi a Foto», poi mandamela nella chat."), img);
   }
