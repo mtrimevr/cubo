@@ -109,6 +109,9 @@ body {
 .view3d { position: absolute; inset: 0; touch-action: none; }
 .view3d canvas { display: block; width: 100%; height: 100%; }
 .view3d-note { position: absolute; left: 12px; right: 12px; bottom: 12px; color: #C9D6DF; font: 500 13px/1.3 "Barlow", system-ui, sans-serif; text-align: center; pointer-events: none; }
+.flash-btn { position: absolute; right: 12px; top: 74px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border: 1px solid rgba(255,255,255,.45); border-radius: 20px; background: rgba(0,0,0,.55); color: #fff; font: 600 14px/1 "Barlow", system-ui, sans-serif; }
+.flash-btn[aria-pressed="false"] { color: #C9D6DF; background: rgba(0,0,0,.35); }
+.flash-btn[aria-pressed="false"] path { fill: none; stroke: currentColor; stroke-width: 1.6; }
 .live-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
 .live-tip {
   position: absolute; left: 12px; right: 12px; bottom: 14px; display: none;
@@ -208,6 +211,10 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
     <div id="flash"></div>
     <div class="pill" id="pill" data-s="idle" role="status" aria-live="polite"><i></i><span id="pillText"></span></div>
     <div class="live-tip" id="liveTip" aria-live="polite"></div>
+    <button class="flash-btn" id="flashBtn" type="button" hidden aria-pressed="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" fill="currentColor"/></svg>
+      <span id="flashTxt">Flash acceso</span>
+    </button>
     <div class="toast" id="toast" aria-live="polite"></div>
   </div>
 
@@ -262,6 +269,10 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
         <div class="actions">
           <button class="btn wide" type="button" data-act="view3d" id="btn3d">Vedi il cubo in 3D</button>
         </div>
+        <div class="actions">
+          <button class="btn" type="button" data-act="export">Salva i dati della scansione</button>
+        </div>
+        <div id="exportBox"></div>
         <div class="actions">
           <button class="btn" type="button" data-act="back">Torna alle foto</button>
           <button class="btn" type="button" data-act="rescan">Nuova mescolata</button>
@@ -3295,14 +3306,14 @@ const MirrorVision = (() => {
 
   // No calibration and no marks: try every orientation and both mirror versions of the
   // cube, keep the ones whose pieces fit, then let the centre heights pick the orientation.
-  function decodeAuto(faces, cls) {
+  function decodeAuto(faces, cls, rel) {
     const b1 = { U: cls.A[0], D: cls.A[1], F: cls.B[0], B: cls.B[1], R: cls.C[0], L: cls.C[1] };
     const b2 = Object.assign({}, b1, { R: cls.C[1], L: cls.C[0] });
     const cands = [];
     for (const base of [b1, b2]) for (const rot of ROTS) {
       const th = {};
       for (const P of ORDER) th[rot[P]] = base[P];
-      const d = decode(faces, th);
+      const d = decode(faces, th, rel ? rel.map((e) => ({ idx: e.idx, x: th[e.P] + e.delta, w: e.w, P: e.P, key: "plx" })) : null);
       cands.push({ th, d, cost: d.cost });
     }
     cands.sort((p, q) => p.cost - q.cost);
@@ -3458,16 +3469,150 @@ const MirrorVision = (() => {
         }
       });
     }
+    // Parallax: depth of every tile of a face from its turned views (when they exist).
+    const POS = { TL: 0, T: 1, TR: 2, L: 3, C: 4, R: 5, BL: 6, B: 7, BR: 8 };
+    const where = [["F", 0]];
+    others.forEach((P, i) => { where[best.t.perm[i]] = [P, (best.t.code >> (2 * i)) & 3]; });
+    const plxInfo = [];
+    list.forEach((r, j) => {
+      if (!r || !r.plx || !where[j]) return;
+      const [P, kk] = where[j], fi = ORDER.indexOf(P);
+      const nameOf = (nm) => { let x = nm; for (let q = 0; q < kk; q++) x = ROT90[x]; return x; };
+      const known = {};
+      for (const nm of Object.keys(POS)) if (nm !== "C") known[nm] = d.thick[d.facelets[fi * 9 + POS[nameOf(nm)]]] - d.thick[P];
+      const pf = parallaxFace(r.plx.front, r.plx.turned || [], known);
+      for (const nm in pf.tiles) {
+        const idx = fi * 9 + POS[nameOf(nm)];
+        const est = d.thick[P] + pf.tiles[nm].est;
+        extra.push({ idx, x: est, w: 2, P, key: "plx" });
+        plxInfo.push({ idx, est, P, slot: j });
+      }
+    });
+    const rel = plxInfo.map((e) => ({ idx: e.idx, P: e.P, delta: e.est - d.thick[e.P], w: 2 }));
+    if (rel.length) {
+      const dA = decodeAuto(best.f, cls, rel);
+      if (dA.thick !== d.thick) {
+        d = dA;
+        // re-anchor the other cross-check entries to the new frame
+        for (const e of extra) if (e.key === "plx") e.x = d.thick[e.P] + rel.find((q) => q.idx === e.idx).delta;
+      }
+      for (const e of plxInfo) e.est = d.thick[e.P] + rel.find((q) => q.idx === e.idx).delta;
+    }
     if (extra.length) {
       const d2 = decode(best.f, d.thick, extra);
       d = Object.assign({}, d, { facelets: d2.facelets, cost: d2.cost, fixes: d2.fixes, worst: d2.worst, worstFrom: d2.worstFrom, meas: d2.meas });
     }
-    const bad = extra.filter((e) => Math.abs(e.x - d.thick[d.facelets[e.idx]]) > 10).map((e) => ({ P: e.P, key: e.key, idx: e.idx, est: e.x, got: d.thick[d.facelets[e.idx]] }));
-    d.persp = { n: extra.length, bad };
+    const bad = extra.filter((e) => e.key !== "plx" && Math.abs(e.x - d.thick[d.facelets[e.idx]]) > 10).map((e) => ({ P: e.P, key: e.key, idx: e.idx, est: e.x, got: d.thick[d.facelets[e.idx]] }));
+    const nPersp = extra.filter((e) => e.key !== "plx").length;
+    // the perspective check only speaks where there is no parallax for that tile
+    const withPlx = new Set(plxInfo.map((e) => e.idx));
+    d.persp = { n: nPersp, bad: bad.filter((b) => b.key !== "plx" && !withPlx.has(b.idx)) };
+    d.plx = { n: plxInfo.length, bad: plxInfo.filter((e) => Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 8) };
     const placed = { F: 0 };
     others.forEach((P, i) => { placed[P] = best.t.perm[i]; });
     const second = top.find((t) => t !== best.t);
     return Object.assign(d, { layout: { placed, pairCost: best.t.c, secondPairCost: second ? second.c : Infinity } });
+  }
+
+  // ---------- parallax: depth of every tile from a slightly turned view ----------
+  // Extents of the tile in each of the nine cells, in the face frame (u' right, v' down),
+  // found by shape (light regions closed by the black plastic).
+  const CELLS = [["TL", "T", "TR"], ["L", "C", "R"], ["BL", "B", "BR"]];
+  function tileEdges(img, W, H, res) {
+    if (!res || !res.g || !res.h) return null;
+    const { val } = masks(img, W, H);
+    const t = enclosedTiles(img, val, W, H).mask;
+    const { labels, comps } = components(t, W, H);
+    const [g1, g2] = res.g, [h1, h2] = res.h;
+    const box = comps.map(() => ({ u0: Infinity, u1: -Infinity, v0: Infinity, v1: -Infinity, su: 0, sv: 0, n: 0 }));
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, c = labels[i];
+      if (!c || !t[i]) continue;
+      const u = x * res.cs + y * res.sn - res.uMin, v = -x * res.sn + y * res.cs - res.vMin, b = box[c];
+      if (u < b.u0) b.u0 = u; if (u > b.u1) b.u1 = u; if (v < b.v0) b.v0 = v; if (v > b.v1) b.v1 = v;
+      b.su += u; b.sv += v; b.n++;
+    }
+    const out = {};
+    const minArea = 0.08 * (g2 - g1) * (h2 - h1);
+    for (let c = 1; c < box.length; c++) {
+      const b = box[c];
+      if (b.n < minArea) continue;
+      const cu = b.su / b.n, cv = b.sv / b.n;
+      const col = cu < g1 ? 0 : cu > g2 ? 2 : 1, row = cv < h1 ? 0 : cv > h2 ? 2 : 1;
+      const nm = CELLS[row][col];
+      if (!out[nm] || out[nm].n < b.n) out[nm] = { u0: b.u0, u1: b.u1, v0: b.v0, v1: b.v1, n: b.n };
+    }
+    return out;
+  }
+  // Raw parallax data of one turned view against the frontal one. The axis of the turn is
+  // the one along which the centre cell got narrower.
+  function parallaxView(front, turned) {
+    const e0 = front.edges, e1 = turned.edges;
+    if (!e0 || !e1 || !e0.C || !e1.C) return null;
+    const r0 = (front.res.g[1] - front.res.g[0]) / (front.res.h[1] - front.res.h[0]);
+    const r1 = (turned.res.g[1] - turned.res.g[0]) / (turned.res.h[1] - turned.res.h[0]);
+    const axis = r1 / r0 < 1 ? "u" : "v";
+    const cosEst = axis === "u" ? r1 / r0 : r0 / r1;
+    const other = axis === "u" ? "v" : "u";
+    // scale from the direction that the turn does not shorten
+    const s = (e1.C[other + "1"] - e1.C[other + "0"]) / (e0.C[other + "1"] - e0.C[other + "0"]);
+    const m0 = front.res.g[1] - front.res.g[0];
+    const rows = [];
+    for (const nm in e0) {
+      if (nm === "C" || !e1[nm]) continue;
+      rows.push({ nm, lo0: e0[nm][axis + "0"] - e0.C[axis + "0"], hi0: e0[nm][axis + "1"] - e0.C[axis + "1"],
+        lo1: (e1[nm][axis + "0"] - e1.C[axis + "0"]) / s, hi1: (e1[nm][axis + "1"] - e1.C[axis + "1"]) / s });
+    }
+    return { axis, cosEst, s, m0, rows };
+  }
+  // Depth of each tile (relative to the centre, in % of the side) from one view, given the
+  // depths the decoder found: they calibrate the unknown turn angle (two numbers per view),
+  // then every tile gets its own estimate. The edge that the turn cannot hide is used, and
+  // the side is chosen by which fits better.
+  function parallaxDepths(pv, known) {
+    if (!pv || pv.rows.length < 4) return null;
+    const k = 33.6 / pv.m0;
+    let best = null;
+    for (const side of ["lo", "hi"]) {
+      const pts = pv.rows.filter((r) => typeof known[r.nm] === "number").map((r) => ({ nm: r.nm, a: r[side + "1"], b: r[side + "0"], D: known[r.nm] / k }));
+      if (pts.length < 4) continue;
+      let use = pts.slice(), C = 1, S = 0;
+      for (let it = 0; it < 2; it++) {
+        // least squares for a = C b + S D
+        let sbb = 0, sbd = 0, sdd = 0, sab = 0, sad = 0;
+        for (const p of use) { sbb += p.b * p.b; sbd += p.b * p.D; sdd += p.D * p.D; sab += p.a * p.b; sad += p.a * p.D; }
+        const det = sbb * sdd - sbd * sbd;
+        if (Math.abs(det) < 1e-9) break;
+        C = (sab * sdd - sad * sbd) / det; S = (sad * sbb - sab * sbd) / det;
+        if (it === 0 && use.length > 5) {
+          const r = use.map((p) => Math.abs(p.a - C * p.b - S * p.D));
+          const worst = r.indexOf(Math.max(...r));
+          use = use.filter((_, j) => j !== worst);
+        }
+      }
+      if (Math.abs(S) < 0.15 || C < 0.8 || C > 1.1) continue;   // not turned enough, or a broken fit
+      const est = {};
+      const res = [];
+      for (const p of pts) { est[p.nm] = ((p.a - C * p.b) / S) * k; res.push(Math.abs(est[p.nm] - known[p.nm])); }
+      res.sort((x, y) => x - y);
+      const rss = res[Math.floor(res.length / 2)];              // median disagreement of the view
+      if (!best || rss < best.rss) best = { est, rss, C, S, side };
+    }
+    return best;
+  }
+
+  function parallaxFace(front, turnedList, known) {
+    const per = {};
+    let views = 0;
+    for (const t of turnedList) {
+      const fit = parallaxDepths(parallaxView(front, t), known);
+      if (!fit || fit.rss > 4) continue;                       // a view that does not hold together
+      views++;
+      for (const nm in fit.est) (per[nm] = per[nm] || []).push(fit.est[nm]);
+    }
+    const out = {};
+    for (const nm in per) { const v = per[nm].slice().sort((a, b) => a - b); out[nm] = { est: v[v.length >> 1], n: v.length, spread: v[v.length - 1] - v[0] }; }
+    return { views, tiles: out };
   }
 
   // Profile coordinates (u', v') back to image pixel coordinates.
@@ -3511,7 +3656,7 @@ const MirrorVision = (() => {
     });
   }
 
-  return { analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, rotateReading, sameFace, ROTS, TARGET, STICKERS };
+  return { analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, rotateReading, sameFace, ROTS, TARGET, STICKERS };
 })();
 
 if (typeof module !== "undefined") module.exports = MirrorVision;
@@ -3730,6 +3875,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
 
   function newScan() {
+    st.rechecks = null; st.round = 0; st.lastCheck = null;
     st.slots = SLOTS.map((s) => ({ face: s.face, c: null, res: null, thumb: null }));
     st.cur = 0; st.still = null; st.decoded = null;
     $("#scanResult").innerHTML = "";
@@ -4052,7 +4198,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   function makeWorker() {
     try {
       const core = document.getElementById("core-src").textContent;
-      const src = core + "\nself.onmessage = function (e) { var d = e.data; var r = MirrorVision.analyzeScrambled(new Uint8ClampedArray(d.buf), d.w, d.h, 33.6, { maxMissing: 5 }); self.postMessage({ id: d.id, res: r }); };";
+      const src = core + "\nself.onmessage = function (e) { var d = e.data; var im = new Uint8ClampedArray(d.buf); var r = MirrorVision.analyzeScrambled(im, d.w, d.h, 33.6, { maxMissing: 5 }); if (r.g) r.edges = MirrorVision.tileEdges(im, d.w, d.h, r); self.postMessage({ id: d.id, res: r }); };";
       const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
       w.onmessage = (e) => onLiveResult(e.data.id, e.data.res);
       w.onerror = () => { live.worker = null; live.busy = false; };
@@ -4091,12 +4237,25 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (caps.torch) { await live.track.applyConstraints({ advanced: [{ torch: true }] }); live.torch = true; $("#btnTorch").hidden = false; }
     } catch (e) { /* no torch control */ }
     $("#btnTorch").textContent = live.torch ? "Spegni la luce" : "Accendi la luce";
+    if (live.torch || (live.track.getCapabilities && (live.track.getCapabilities() || {}).torch)) {
+      $("#flashBtn").hidden = false; setTorch(live.torch);
+    }
     app.dataset.live = "on";
     if (st.cur < 0) st.cur = nextOpen(-1);
     st.still = null; art.innerHTML = "";
     liveLoop();
   }
+  async function setTorch(on) {
+    try { await live.track.applyConstraints({ advanced: [{ torch: on }] }); live.torch = on; } catch (e) { /* keep the state */ }
+    const b = $("#flashBtn");
+    b.setAttribute("aria-pressed", live.torch ? "true" : "false");
+    $("#flashTxt").textContent = live.torch ? "Flash acceso" : "Flash spento";
+    $("#btnTorch").textContent = live.torch ? "Spegni la luce" : "Accendi la luce";
+  }
+  $("#flashBtn").addEventListener("click", () => { if (live.track) setTorch(!live.torch); });
   function stopLive() {
+    $("#flashBtn").hidden = true;
+    live.turnPh = null;
     cancelAnimationFrame(live.raf);
     live.on = false;
     if (live.stream) live.stream.getTracks().forEach((t) => t.stop());
@@ -4149,7 +4308,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     live.jobs[id] = { roi, k, crop: c, t: now };
     live.busy = true;
     if (live.worker) live.worker.postMessage({ id, buf: img.data.buffer, w: pw, h: ph }, [img.data.buffer]);
-    else setTimeout(() => onLiveResult(id, MirrorVision.analyzeScrambled(img.data, pw, ph, MIDDLE, { maxMissing: 5 })), 0);
+    else setTimeout(() => { const r = MirrorVision.analyzeScrambled(img.data, pw, ph, MIDDLE, { maxMissing: 5 }); if (r.g) r.edges = MirrorVision.tileEdges(img.data, pw, ph, r); onLiveResult(id, r); }, 0);
   }
 
   const MEAS = [];
@@ -4195,6 +4354,16 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (!live.on || !job || st.cur < 0) return;
     const now = performance.now(), v = live.video;
     res.job = job;
+    if (live.turnPh) {
+      if (res.g) {
+        const box = faceBox(res, job), bw = box.x1 - box.x0, bh = box.y1 - box.y0, mx = 0.4 * Math.max(bw, bh);
+        const x0 = Math.max(0, box.x0 - mx), y0 = Math.max(0, box.y0 - mx);
+        live.roi = { x: x0, y: y0, w: Math.min(v.videoWidth, box.x1 + mx) - x0, h: Math.min(v.videoHeight, box.y1 + mx) - y0 };
+        live.roiT = now;
+      }
+      handleTurn(res, now);
+      return;
+    }
     const slot = st.cur;
     let msg = null, bad = !res.ok;
     if (res.ok) {
@@ -4286,8 +4455,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (r && r.job && r.g && performance.now() - r.job.t < 500) {
       const j = r.job;
       const map = (x, y) => [(j.roi.x + x / j.k) * s + ox, (j.roi.y + y / j.k) * s + oy];
-      const good = r.ok && live.cand && live.cand.reads.includes(r);
-      drawReading(r, map, !good);
+      if (live.turnPh) { drawReading(r, map, false); drawProgress(r, map, live.turnPh.frac || 0); }
+      const good = !live.turnPh && r.ok && live.cand && live.cand.reads.includes(r);
+      if (!live.turnPh) drawReading(r, map, !good);
       if (good) { drawMissing(r, map, live.cand.cov && live.cand.cov.missing); drawProgress(r, map, live.cand.frac || 0); }
     }
     drawMiniMap();
@@ -4319,18 +4489,93 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false });
     live.cand = null;
     beep(); flash();
-    toast(`${SLOTS[slot].name} letta`);
+    const fr = c.reads.filter((r) => r.edges && r.edges.C).sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
+    renderScan();
+    if (fr) {
+      live.turnPh = { slot, front: { res: { g: fr.g, h: fr.h }, edges: fr.edges }, views: [], axes: { u: 0, v: 0 }, t0: performance.now(), lastT: 0, frac: 0 };
+      toast(`${SLOTS[slot].name} letta di fronte. Ora ruotala un po' di lato`);
+      live.tip = `${SLOTS[slot].name}: ora ruota piano il cubo di lato, circa 20 gradi, a sinistra, a destra, in su e in giù`;
+    } else {
+      toast(`${SLOTS[slot].name} letta`);
+      advanceLive(slot);
+    }
+  }
+  function advanceLive(slot) {
+    live.waitTurn = { slot, seen: performance.now() };
     st.cur = nextOpen(slot);
     renderScan();
-    if (st.cur < 0) {
-      stopLive();
-      st.still = { c: st.slots[0].c, res: st.slots[0].res };
-      drawStage();
-      setPill("ok", "Sei facce lette");
-      finishScan();
-    } else {
-      live.tip = `Fatto. ${SLOTS[st.cur].live}`;
+    if (st.cur < 0) liveCheck();
+    else live.tip = `Fatto. ${SLOTS[st.cur].live}`;
+  }
+  function handleTurn(res, now) {
+    const T = live.turnPh;
+    let msg = "ruota piano il cubo di lato, circa 20 gradi: a sinistra, a destra, in su e in giù";
+    if (res.g && res.edges && res.edges.C) {
+      const pv = MirrorVision.parallaxView(T.front, { res: { g: res.g, h: res.h }, edges: res.edges });
+      if (pv) {
+        const deg = (Math.acos(Math.max(-1, Math.min(1, pv.cosEst))) * 180) / Math.PI;
+        if (deg < 8) msg = "ancora un po' più di lato";
+        else if (deg > 34) msg = "un po' meno di lato, circa 20 gradi";
+        else if (now - T.lastT > 250) {
+          const mine = st.slots[T.slot].res;
+          const same = res.ok ? MirrorVision.sameFace(res, mine, 6) : 0;
+          const other = res.ok ? st.slots.findIndex((o, j) => j !== T.slot && o.res && o.res.ok && MirrorVision.sameFace(res, o.res, 6) < same - 1) : -1;
+          if (same < 9 && other < 0) { T.views.push({ res: { g: res.g, h: res.h }, edges: res.edges }); T.axes[pv.axis]++; T.lastT = now; }
+        }
+      }
     }
+    T.frac = Math.min(1, T.views.length / 4);
+    const el2 = now - T.t0;
+    if ((T.views.length >= 4 && T.axes.u && T.axes.v) || (T.views.length >= 3 && el2 > 7000) || el2 > 12000) {
+      st.slots[T.slot].res.plx = { front: T.front, turned: T.views };
+      live.turnPh = null;
+      toast(T.views.length ? `${SLOTS[T.slot].name} completa` : `${SLOTS[T.slot].name} letta, senza viste di lato`);
+      beep();
+      advanceLive(T.slot);
+      return;
+    }
+    live.tip = `${SLOTS[T.slot].name}: ${msg} (viste di lato ${T.views.length} di 4)`;
+    live.last = res;
+  }
+  // All six faces are in: check them together; if something does not add up, go back to the
+  // face with the most doubts and read it again, until everything agrees.
+  function liveCheck() {
+    const d = MirrorVision.decodeFree(st.slots.map((x) => x.res), CLS);
+    const slotOf = (letter) => d.layout.placed[letter];
+    // every disagreement involves two faces: where the width was measured and where the
+    // parallax was measured. If re-reading a face did not change the disagreements, the
+    // other face involved is the one to look at next.
+    const count = new Array(6).fill(0), flagged = [];
+    for (const b of d.plx.bad) {
+      const who = [b.slot];
+      for (const o of (d.meas && d.meas[b.idx]) || []) if (!o.w) { const k = slotOf(o.P); if (k != null && !who.includes(k)) who.push(k); }
+      flagged.push(b.idx);
+      for (const k of who) count[k]++;
+    }
+    for (const b of d.persp.bad) { const k = slotOf(b.P); if (k != null) count[k]++; flagged.push(b.idx); }
+    if (d.worst > 6) { const k = slotOf(d.worstFrom); if (k != null) count[k] += 2; }
+    const key = flagged.sort((a, b) => a - b).join(",");
+    if (st.lastCheck && st.lastCheck.key === key && st.lastCheck.slot != null) count[st.lastCheck.slot] = 0;
+    st.rechecks = st.rechecks || new Array(6).fill(0);
+    st.round = (st.round || 0) + 1;
+    let k = -1;
+    for (let j = 0; j < 6; j++) if (count[j] && st.rechecks[j] < 2 && (k < 0 || count[j] > count[k])) k = j;
+    st.lastCheck = { key, slot: k >= 0 ? k : null };
+    if (k >= 0 && st.round <= 4) {
+      st.rechecks[k]++;
+      st.cur = k;
+      st.slots.forEach((x, j) => { x.warn = j === k; });
+      renderScan();
+      setPill("warn", `Da ricontrollare: ${SLOTS[k].name}`);
+      toast(`Qualcosa non torna sulla faccia «${SLOTS[k].name}»`);
+      live.tip = `Qualcosa non torna su «${SLOTS[k].name}»: mostramela di nuovo di fronte, poi ruotala di lato`;
+      return;
+    }
+    stopLive();
+    st.still = { c: st.slots[0].c, res: st.slots[0].res };
+    drawStage();
+    setPill("ok", "Sei facce lette");
+    finishScan();
   }
 
   // ---------- 3D view: the cube as it has been reconstructed ----------
@@ -4547,6 +4792,43 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
   function close3D() { v3.on = false; cancelAnimationFrame(v3.raf); }
 
+  // ---------- scan data as one picture, to send for a check ----------
+  function exportScan() {
+    const d = st.decoded, W = 900, cell = 290, top = 60;
+    const c = document.createElement("canvas");
+    c.width = W; c.height = top + 2 * (cell + 150) + 220;
+    const g = c.getContext("2d");
+    g.fillStyle = "#0E1A2B"; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = "#FFFFFF"; g.font = "600 26px system-ui, sans-serif";
+    g.fillText("Calibro per Mirror Cube: dati della scansione", 20, 40);
+    st.slots.forEach((sl, i) => {
+      const x = 10 + (i % 3) * (cell + 10), y = top + Math.floor(i / 3) * (cell + 150);
+      if (sl.c) { const k = Math.min(cell / sl.c.width, cell / sl.c.height); g.drawImage(sl.c, x, y, sl.c.width * k, sl.c.height * k); }
+      g.fillStyle = "#FFFFFF"; g.font = "600 18px system-ui, sans-serif";
+      g.fillText(`${i + 1}. ${SLOTS[i].name}`, x, y + cell + 22);
+      g.font = "14px ui-monospace, monospace"; g.fillStyle = "#C9D6DF";
+      const e = (sl.res && sl.res.ext) || {}, line = [];
+      for (const nm of ["TL", "T", "TR", "L", "R", "BL", "B", "BR"]) for (const dd in e[nm] || {}) line.push(`${nm}.${dd[0]}${e[nm][dd].toFixed(1)}`);
+      for (let r = 0; r < 4; r++) g.fillText(line.slice(r * 3, r * 3 + 3).join(" "), x, y + cell + 44 + r * 18);
+      const pl = sl.res && sl.res.plx ? sl.res.plx.turned.length : 0;
+      g.fillText(`viste di lato: ${pl}`, x, y + cell + 120);
+    });
+    g.fillStyle = "#FFFFFF"; g.font = "15px ui-monospace, monospace";
+    const y0 = top + 2 * (cell + 150) + 20;
+    if (d) {
+      const rows = [
+        `stato: ${d.facelets}`,
+        `spessori: ${Object.entries(d.thick).map(([k, v]) => k + v).join(" ")}  peggiore: ${d.worst.toFixed(1)} (${d.worstFrom})  margine: ${d.frame.margin.toFixed(0)}`,
+        `parallasse: ${d.plx ? d.plx.n + " misure, " + d.plx.bad.length + " in disaccordo" : "-"}   prospettiva: ${d.persp ? d.persp.n + " misure, " + d.persp.bad.length + " in disaccordo" : "-"}`,
+        `disaccordi: ${(d.plx ? d.plx.bad : []).map((b) => b.idx + ":" + b.est.toFixed(1) + "/" + d.thick[d.facelets[b.idx]]).join(" ")}`,
+      ];
+      rows.forEach((t, r) => { for (let q = 0; q < t.length; q += 95) g.fillText(t.slice(q, q + 95), 20, y0 + r * 44 + (q / 95) * 20); });
+    }
+    const box = $("#exportBox"); box.innerHTML = "";
+    const img = el("img"); img.src = c.toDataURL("image/png"); img.alt = "Dati della scansione"; img.style.width = "100%"; img.style.borderRadius = "8px";
+    box.append(el("p", "hint", "Tieni premuta l'immagine e scegli «Aggiungi a Foto», poi mandamela nella chat."), img);
+  }
+
   // ---------- solver ----------
   function warmSolver() {
     if (st.solverReady || typeof Cube === "undefined") return;
@@ -4687,6 +4969,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     else if (act === "back") backToScan(st.slots.findIndex((x) => x.warn) >= 0 ? st.slots.findIndex((x) => x.warn) : 0);
     else if (act === "video") vidIn.click();
     else if (act === "live") startLive();
+    else if (act === "export") exportScan();
     else if (act === "view3d") {
       v3.on = !v3.on;
       $("#btn3d").textContent = v3.on ? "Torna al disegno della mossa" : "Vedi il cubo in 3D";
