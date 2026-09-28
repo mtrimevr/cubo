@@ -3536,7 +3536,10 @@ const MirrorVision = (() => {
     const nPersp = extra.filter((e) => e.key !== "plx").length;
     // the perspective check only speaks where there is no parallax for that tile
     const withPlx = new Set(plxInfo.map((e) => e.idx));
-    d.persp = { n: nPersp, bad: bad.filter((b) => b.key !== "plx" && !withPlx.has(b.idx)) };
+    // The perspective check needs tiles at different depths to calibrate itself: on a solved
+    // (or nearly flat) cube every tile sits at the depth of its centre, so it stays silent.
+    const lever = extra.filter((e) => e.key !== "plx" && Math.abs(d.thick[d.facelets[e.idx]] - d.thick[e.P]) > 5).length;
+    d.persp = lever >= 4 ? { n: nPersp, bad: bad.filter((b) => b.key !== "plx" && !withPlx.has(b.idx)) } : { n: 0, bad: [], off: true };
     d.plx = { n: plxInfo.length, bad: plxInfo.filter((e) => Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 8) };
     const placed = { F: 0 };
     others.forEach((P, i) => { placed[P] = best.t.perm[i]; });
@@ -3685,6 +3688,65 @@ const MirrorVision = (() => {
     return out;
   }
 
+  // ---------- naming the faces of a SOLVED cube ----------
+  // Each side of a face shows the thickness of the neighbour on that side, so the first face
+  // gives the four faces around it. Its own axis is the one missing; which of its two values
+  // is the front comes from the handedness of the cube (where the three thinnest layers
+  // meet), a physical fact taken from the reference measures.
+  function chirality(th, cls) {
+    const axes = [["R", "L"], ["U", "D"], ["F", "B"]];
+    const classOf = (v) => ["A", "B", "C"].findIndex((k) => Math.min(Math.abs(cls[k][0] - v), Math.abs(cls[k][1] - v)) < 3.5);
+    const c = axes.map(([p]) => classOf(th[p]));
+    if (c.some((x) => x < 0) || new Set(c).size < 3) return 0;
+    let inv = 0;
+    for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) if (c[i] > c[j]) inv++;
+    return (inv % 2 ? -1 : 1) * axes.reduce((acc, [p, q]) => acc * (th[p] < th[q] ? 1 : -1), 1);
+  }
+  function solvedModel(front, cls, ref) {
+    const med = (a) => { const v = a.filter((x) => typeof x === "number").sort((x, y) => x - y); return v.length ? v[v.length >> 1] : null; };
+    const e = (front && front.ext) || {}, g = (nm, d) => e[nm] && e[nm][d];
+    const side = { U: med([g("TL", "up"), g("T", "up"), g("TR", "up")]), D: med([g("BL", "down"), g("B", "down"), g("BR", "down")]),
+      L: med([g("TL", "left"), g("L", "left"), g("BL", "left")]), R: med([g("TR", "right"), g("R", "right"), g("BR", "right")]) };
+    if (Object.values(side).some((v) => v == null)) return null;
+    // only for a face that really looks solved: each side uniform, opposite sides on one axis
+    const spread = (a) => { const v = a.filter((x) => typeof x === "number"); return v.length === 3 ? Math.max(...v) - Math.min(...v) : 99; };
+    if ([spread([g("TL", "up"), g("T", "up"), g("TR", "up")]), spread([g("BL", "down"), g("B", "down"), g("BR", "down")]),
+      spread([g("TL", "left"), g("L", "left"), g("BL", "left")]), spread([g("TR", "right"), g("R", "right"), g("BR", "right")])].some((x) => x > 4)) return null;
+    const axisOf = (v) => ["A", "B", "C"].find((k) => Math.min(Math.abs(cls[k][0] - v), Math.abs(cls[k][1] - v)) < 3.5);
+    const au = axisOf(side.U), ad = axisOf(side.D), al = axisOf(side.L), ar = axisOf(side.R);
+    if (!au || au !== ad || !al || al !== ar || au === al) return null;
+    const all = [].concat(cls.A, cls.B, cls.C);
+    const snap = (v) => all.reduce((b, x) => (Math.abs(x - v) < Math.abs(b - v) ? x : b), all[0]);
+    const th = { U: snap(side.U), D: snap(side.D), L: snap(side.L), R: snap(side.R) };
+    const used = new Set(Object.values(th));
+    const pair = ["A", "B", "C"].map((k) => cls[k]).find((p) => !used.has(p[0]) && !used.has(p[1]));
+    if (!pair || used.size < 4) return null;
+    const want = chirality(ref, cls);
+    let pick = null;
+    for (const [f, b] of [[pair[0], pair[1]], [pair[1], pair[0]]]) { const t = Object.assign({}, th, { F: f, B: b }); if (chirality(t, cls) === want) pick = t; }
+    if (!pick) return null;
+    const exp = {};
+    for (const P of ORDER) {
+      const ext = {};
+      for (const nm in TARGET[P]) for (const d in TARGET[P][nm]) (ext[nm] = ext[nm] || {})[d] = pick[ORDER[Math.floor(TARGET[P][nm][d] / 9)]];
+      exp[P] = ext;
+    }
+    return { th: pick, exp };
+  }
+  function nameSolved(model, r) {
+    if (!model || !r || !r.ext) return null;
+    const res = [];
+    for (const P of ["R", "B", "L", "U", "D"]) for (let k = 0; k < 4; k++) {
+      const ex = rotateReading({ ext: model.exp[P], sizes: {} }, k).ext;
+      let sum = 0, n = 0;
+      for (const nm in ex) for (const d in ex[nm]) { const x = r.ext[nm] && r.ext[nm][d]; if (typeof x === "number") { sum += Math.abs(x - ex[nm][d]); n++; } }
+      if (n >= 8) res.push({ P, k, v: sum / n });
+    }
+    res.sort((a, b) => a.v - b.v);
+    const best = res[0], second = res.find((q) => best && q.P !== best.P);
+    return best ? { P: best.P, k: best.k, v: best.v, gap: second ? second.v - best.v : 99 } : null;
+  }
+
   // Profile coordinates (u', v') back to image pixel coordinates.
   function toImage(res, up, vp) {
     const u = up + res.uMin, v = vp + res.vMin;
@@ -3726,7 +3788,7 @@ const MirrorVision = (() => {
     });
   }
 
-  return { analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, sameFaceStrict, placeFace, rotateReading, sameFace, ROTS, TARGET, STICKERS };
+  return { analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, sameFaceStrict, placeFace, solvedModel, nameSolved, rotateReading, sameFace, ROTS, TARGET, STICKERS };
 })();
 
 if (typeof module !== "undefined") module.exports = MirrorVision;
@@ -4634,9 +4696,16 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const best = cands[0], second = cands.find((q) => best && q.P !== best.P);
     let P = null, k = 0;
     if (best && best.c < 6 && (!second || second.c > best.c + 4)) { P = best.P; k = best.k; }
-    else if (Object.keys(placed).length >= 3) {
-      const free0 = ["R", "B", "L", "U", "D"].filter((F) => !placed[F] && !all.some((q) => q.P === F && q.n > 0));
-      if (free0.length === 1 && (!best || best.c >= 10)) P = free0[0];
+    else {
+      // a solved (or almost solved) cube: the corners all look alike, so the faces are named
+      // from the thickness of their neighbours, starting from the first face
+      const mdl = MirrorVision.solvedModel(st.slots[0].res, CLS, THICK0);
+      const ns = mdl && MirrorVision.nameSolved(mdl, r);
+      if (ns && ns.v < 4 && ns.gap > 1.2 && !placed[ns.P]) { P = ns.P; k = ns.k; }
+      else if (Object.keys(placed).length >= 3) {
+        const free0 = ["R", "B", "L", "U", "D"].filter((F) => !placed[F] && !all.some((q) => q.P === F && q.n > 0));
+        if (free0.length === 1 && (!best || best.c >= 10)) P = free0[0];
+      }
     }
     const j = P ? SLOTS.findIndex((x) => x.face === P) : -1;
     const slot = j >= 0 && !st.slots[j].res ? j : fallback;
