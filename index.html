@@ -109,6 +109,9 @@ body {
 .view3d { position: absolute; inset: 0; touch-action: none; }
 .view3d canvas { display: block; width: 100%; height: 100%; }
 .view3d-note { position: absolute; left: 12px; right: 12px; bottom: 12px; color: #C9D6DF; font: 500 13px/1.3 "Barlow", system-ui, sans-serif; text-align: center; pointer-events: none; }
+.m3-live { position: absolute; left: 12px; top: 64px; width: 104px; height: 104px; border-radius: 10px; background: rgba(0,0,0,.45); overflow: hidden; display: none; z-index: 2; }
+.app[data-live="on"] .m3-live { display: block; }
+.m3-live canvas { width: 100% !important; height: 100% !important; }
 .flash-btn { position: absolute; right: 12px; top: 74px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border: 1px solid rgba(255,255,255,.45); border-radius: 20px; background: rgba(0,0,0,.55); color: #fff; font: 600 14px/1 "Barlow", system-ui, sans-serif; }
 .flash-btn[aria-pressed="false"] { color: #C9D6DF; background: rgba(0,0,0,.35); }
 .flash-btn[aria-pressed="false"] path { fill: none; stroke: currentColor; stroke-width: 1.6; }
@@ -211,6 +214,7 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
     <div id="flash"></div>
     <div class="pill" id="pill" data-s="idle" role="status" aria-live="polite"><i></i><span id="pillText"></span></div>
     <div class="live-tip" id="liveTip" aria-live="polite"></div>
+    <div class="m3-live" id="m3live" aria-hidden="true"></div>
     <button class="flash-btn" id="flashBtn" type="button" hidden aria-pressed="true">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" fill="currentColor"/></svg>
       <span id="flashTxt">Flash acceso</span>
@@ -4245,6 +4249,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     app.dataset.live = "on";
     if (st.cur < 0) st.cur = nextOpen(-1);
     st.still = null; art.innerHTML = "";
+    m3.key = ""; updateModel3D();
     liveLoop();
   }
   async function setTorch(on) {
@@ -4265,6 +4270,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     live.stream = null; live.video = null; live.cand = null; live.last = null; live.busy = false; live.jobs = {};
     app.dataset.live = "off";
     $("#liveTip").textContent = "";
+    m3.key = ""; updateModel3D();
     drawStage();
   }
   function liveUnavailable() {
@@ -4431,17 +4437,63 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (live.cand && now - live.cand.last > LOSE_MS) live.cand = null;
     }
     live.last = res;
-    live.tip = msg === "tieni fermo…" ? `${SLOTS[slot].live}: tieni fermo…` : `${SLOTS[slot].live} (${msg})`;
+    // free rotation: no fixed order, the tip only says what the page is doing
+    live.tip = msg === "tieni fermo…" ? "Faccia nuova: tienila ferma un attimo…" : msg.charAt(0).toUpperCase() + msg.slice(1);
   }
 
+  const STC = { none: "rgba(0,0,0,.45)", front: "#F2C94C", done: "#3DDC84", bad: "#FF5A5F", new: "#FFFFFF" };
+  function faceStatus(k) {
+    const sl = st.slots[k];
+    if (!sl || !sl.res || !sl.res.ok) return "none";
+    if (st.flagged && st.flagged.has(k)) return "bad";
+    const px = sl.res.plx;
+    return !px || !px.front || px.turned.length >= 2 ? "done" : "front";
+  }
+  function tileStatus(k, nm) {
+    if (k < 0) return "new";
+    if (st.flagged && st.flagged.has(k)) return "bad";
+    const px = st.slots[k].res && st.slots[k].res.plx;
+    if (!px || !px.front) return "done";
+    return px.turned.filter((t) => t.edges && t.edges[nm]).length >= 2 ? "done" : "front";
+  }
+  // Tiles of the face in view, coloured by what is still missing, with a dot on every corner.
+  function drawTiles(r, map, k) {
+    const e = r.edges;
+    if (!e) return;
+    ctx.save();
+    for (const nm in e) {
+      const b = e[nm], col = STC[tileStatus(k, nm)];
+      const cs = [[b.u0, b.v0], [b.u1, b.v0], [b.u1, b.v1], [b.u0, b.v1]].map(([u, v]) => { const q = MirrorVision.toImage(r, u, v); return map(q[0], q[1]); });
+      ctx.fillStyle = col;
+      ctx.globalAlpha = 0.26; ctx.beginPath(); cs.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 1;
+      for (const [x, y] of cs) { ctx.beginPath(); ctx.arc(x, y, 3.4 * dpr, 0, 2 * Math.PI); ctx.fill(); }
+    }
+    ctx.restore();
+  }
+  // Arrows toward the side views this face still needs.
+  function drawArrows(r, map, k) {
+    const px = k >= 0 && st.slots[k].res && st.slots[k].res.plx;
+    if (!px || !px.front || px.turned.length >= 4) return;
+    const have = px.dirs || new Set(), [g1, g2] = r.g, [h1, h2] = r.h, m = g2 - g1, cu = 0.5 * (g1 + g2), cv = 0.5 * (h1 + h2);
+    const spots = { right: [g2 + 1.35 * m, cv, 1, 0], left: [g1 - 1.35 * m, cv, -1, 0], down: [cu, h2 + 1.35 * m, 0, 1], up: [cu, h1 - 1.35 * m, 0, -1] };
+    ctx.save(); ctx.fillStyle = "#F2C94C"; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.lineWidth = 2 * dpr;
+    for (const d in spots) {
+      if (have.has(d)) continue;
+      const [u, v, du, dv] = spots[d], L = 0.28 * m;
+      const P = (a, b) => { const q = MirrorVision.toImage(r, a, b); return map(q[0], q[1]); };
+      const tip = P(u + du * L, v + dv * L), b1 = P(u - dv * L * 0.7, v + du * L * 0.7), b2 = P(u + dv * L * 0.7, v - du * L * 0.7);
+      ctx.beginPath(); ctx.moveTo(tip[0], tip[1]); ctx.lineTo(b1[0], b1[1]); ctx.lineTo(b2[0], b2[1]); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
   function drawMiniMap() {
     const s = 14 * dpr, gp = 2 * dpr, pos = { U: [1, 0], L: [0, 1], F: [1, 1], R: [2, 1], B: [3, 1], D: [1, 2] };
     const x0 = stage.width - (4 * s + 3 * gp) - 14 * dpr, y0 = 18 * dpr;
     ctx.save();
     for (const f in pos) {
       const i = SLOTS.findIndex((x) => x.face === f), x = x0 + pos[f][0] * (s + gp), y = y0 + pos[f][1] * (s + gp);
-      const done = st.slots[i] && st.slots[i].res && st.slots[i].res.ok;
-      ctx.fillStyle = done ? LINE : "rgba(0,0,0,.45)";
+      ctx.fillStyle = STC[faceStatus(i)];
       ctx.fillRect(x, y, s, s);
       ctx.lineWidth = (i === st.cur ? 2.2 : 1) * dpr;
       ctx.strokeStyle = i === st.cur ? "#FFFFFF" : "rgba(255,255,255,.55)";
@@ -4463,6 +4515,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (r && r.job && r.g && performance.now() - r.job.t < 500) {
       const j = r.job;
       const map = (x, y) => [(j.roi.x + x / j.k) * s + ox, (j.roi.y + y / j.k) * s + oy];
+      const k = live.lastFace && performance.now() - live.lastFace.t < 900 ? live.lastFace.slot : -1;
+      drawTiles(r, map, k);
+      drawArrows(r, map, k);
       if (live.turnPh) { drawReading(r, map, false); drawProgress(r, map, live.turnPh.frac || 0); }
       const good = !live.turnPh && r.ok && live.cand && live.cand.reads.includes(r);
       if (!live.turnPh) drawReading(r, map, !good);
@@ -4516,9 +4571,15 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const deg = (Math.acos(Math.max(-1, Math.min(1, pv.cosEst))) * 180) / Math.PI;
     if (deg < 8 || deg > 34) return;
     if (res.ok && MirrorVision.sameFace(res, sl.res, 6) > 9) return;
+    const sz = res.sizes || {};
+    let dir = null;
+    if (pv.axis === "u" && sz.L && sz.R) dir = Math.log(sz.L.c / sz.R.c) > 0 ? "right" : "left";
+    if (pv.axis === "v" && sz.T && sz.B) dir = Math.log(sz.T.c / sz.B.c) > 0 ? "down" : "up";
+    px.dirs = px.dirs || new Set();
+    if (dir) px.dirs.add(dir);
     px.turned.push({ res: { g: res.g, h: res.h }, edges: res.edges });
     px.lastT = now;
-    if (px.turned.length === 2) renderScan();
+    if (px.turned.length === 2) { beep(); toast(`«${SLOTS[lf.slot].name}» completa`); renderScan(); }
     maybeCheck(now);
   }
   // With all six faces and a few side views each, check the whole cube.
@@ -4693,11 +4754,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const nf = st.slots.filter((x) => x.res && x.res.ok).length;
     $("#m3label").textContent = nf === 0 ? "Modello 3D del cubo: si costruisce man mano che leggo le facce."
       : nf < 6 ? `${nf} facce viste su 6. I pezzi a punti aspettano ancora qualche misura: continua a ruotare.` : "Tutte le facce viste: raccolgo le viste di lato e controllo il cubo.";
-    const key = JSON.stringify(boxes.map((b) => [b.lo, b.hi, b.unknown]));
+    const key = JSON.stringify(boxes.map((b) => [b.lo, b.hi, b.unknown])) + (live.on ? "L" : "P");
     if (key === m3.key && m3.renderer) return;
     m3.key = key;
     try { await loadThree(); } catch (e) { return; }
-    const T = window.THREE, host = $("#m3view");
+    const T = window.THREE, host = live.on ? $("#m3live") : $("#m3view"), side = live.on ? 104 : 150;
     if (!m3.renderer) {
       m3.renderer = new T.WebGLRenderer({ antialias: true, alpha: true });
       m3.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
@@ -4719,7 +4780,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       };
       tick();
     }
-    if (!host.contains(m3.renderer.domElement)) host.append(m3.renderer.domElement);
+    if (!host.contains(m3.renderer.domElement)) { host.append(m3.renderer.domElement); m3.renderer.setSize(side, side); }
     if (m3.group) { m3.scene.remove(m3.group); m3.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); }
     const g = m3.group = new T.Group();
     const black = new T.MeshStandardMaterial({ color: 0x161616, roughness: 0.6 });
