@@ -3722,15 +3722,21 @@ const MirrorVision = (() => {
     const spread = (a) => { const v = a.filter((x) => typeof x === "number"); return v.length === 3 ? Math.max(...v) - Math.min(...v) : 99; };
     if ([spread([g("TL", "up"), g("T", "up"), g("TR", "up")]), spread([g("BL", "down"), g("B", "down"), g("BR", "down")]),
       spread([g("TL", "left"), g("L", "left"), g("BL", "left")]), spread([g("TR", "right"), g("R", "right"), g("BR", "right")])].some((x) => x > 4)) return null;
-    const axisOf = (v) => ["A", "B", "C"].find((k) => Math.min(Math.abs(cls[k][0] - v), Math.abs(cls[k][1] - v)) < 3.5);
-    const au = axisOf(side.U), ad = axisOf(side.D), al = axisOf(side.L), ar = axisOf(side.R);
-    if (!au || au !== ad || !al || al !== ar || au === al) return null;
-    const all = [].concat(cls.A, cls.B, cls.C);
-    const snap = (v) => all.reduce((b, x) => (Math.abs(x - v) < Math.abs(b - v) ? x : b), all[0]);
-    const th = { U: snap(side.U), D: snap(side.D), L: snap(side.L), R: snap(side.R) };
-    const used = new Set(Object.values(th));
-    const pair = ["A", "B", "C"].map((k) => cls[k]).find((p) => !used.has(p[0]) && !used.has(p[1]));
-    if (!pair || used.size < 4) return null;
+    // Each pair of opposite sides belongs to one axis: take the two axes whose layers fit the two
+    // pairs best, together. Real scans read the layers a little closer to the middle (46.5 for
+    // 43.7), and picking the first axis within 3.5 points of each side alone put 46.5 on the
+    // 16.8/49.6 axis: the model failed and every face of the solved cube got a guessed name.
+    let fit = null;
+    for (const ku of ["A", "B", "C"]) for (const kl of ["A", "B", "C"]) {
+      if (ku === kl) continue;
+      for (const [u, dn] of [[cls[ku][0], cls[ku][1]], [cls[ku][1], cls[ku][0]]]) for (const [l, r] of [[cls[kl][0], cls[kl][1]], [cls[kl][1], cls[kl][0]]]) {
+        const cu = Math.abs(side.U - u) + Math.abs(side.D - dn), cl = Math.abs(side.L - l) + Math.abs(side.R - r);
+        if (!fit || cu + cl < fit.c) fit = { c: cu + cl, cu, cl, ku, kl, th: { U: u, D: dn, L: l, R: r } };
+      }
+    }
+    if (!fit || fit.cu > 7 || fit.cl > 7) return null;
+    const th = fit.th;
+    const pair = cls[["A", "B", "C"].find((k) => k !== fit.ku && k !== fit.kl)];
     const want = chirality(ref, cls);
     let pick = null;
     for (const [f, b] of [[pair[0], pair[1]], [pair[1], pair[0]]]) { const t = Object.assign({}, th, { F: f, B: b }); if (chirality(t, cls) === want) pick = t; }
@@ -4794,17 +4800,16 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const cands = all.filter((q) => q.n >= 3 && q.c != null).sort((a, b) => a.c - b.c);
     const best = cands[0], second = cands.find((q) => best && q.P !== best.P);
     let P = null, k = 0;
-    if (best && best.c < 6 && (!second || second.c > best.c + 4)) { P = best.P; k = best.k; }
-    else {
-      // a solved (or almost solved) cube: the corners all look alike, so the faces are named
-      // from the thickness of their neighbours, starting from the first face
-      const mdl = MirrorVision.solvedModel(st.slots[0].res, CLS, THICK0);
-      const ns = mdl && MirrorVision.nameSolved(mdl, r);
-      if (ns && ns.v < 4 && ns.gap > 1.2 && !placed[ns.P]) { P = ns.P; k = (4 - ns.k) % 4; }
-      else if (Object.keys(placed).length >= 3) {
-        const free0 = ["R", "B", "L", "U", "D"].filter((F) => !placed[F] && !all.some((q) => q.P === F && q.n > 0));
-        if (free0.length === 1 && (!best || best.c >= 10)) P = free0[0];
-      }
+    // A solved (or almost solved) cube first: the faces are named from the thickness of their
+    // neighbours and the handedness of the cube, starting from the first face. The few shared
+    // corners fit several places on a solved cube (real scan: the face behind went to «Sopra»).
+    const mdl = MirrorVision.solvedModel(st.slots[0].res, CLS, THICK0);
+    const ns = mdl && MirrorVision.nameSolved(mdl, r);
+    if (ns && ns.v < 4 && ns.gap > 1.2 && !placed[ns.P]) { P = ns.P; k = (4 - ns.k) % 4; }
+    else if (best && best.c < 6 && (!second || second.c > best.c + 4)) { P = best.P; k = best.k; }
+    else if (Object.keys(placed).length >= 3) {
+      const free0 = ["R", "B", "L", "U", "D"].filter((F) => !placed[F] && !all.some((q) => q.P === F && q.n > 0));
+      if (free0.length === 1 && (!best || best.c >= 10)) P = free0[0];
     }
     const j = P ? SLOTS.findIndex((x) => x.face === P) : -1;
     const slot = j >= 0 && !st.slots[j].res ? j : fallback;
@@ -4823,7 +4828,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     slot = chooseSlot(final, slot);
     const guess = !!final.__guess && !(st.flagged && st.flagged.has(slot));
     delete final.aligned; delete final.__guess;
-    Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false, guess, t: performance.now(), frameRes: MirrorVision.rotateReading(final, final.__rot || 0) });
+    Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false, guess, t: performance.now(), turn: final.__rot || 0, frameRes: MirrorVision.rotateReading(final, final.__rot || 0) });
     live.cand = null;
     beep(); flash();
     const fr = c.reads.filter((r) => !r.aligned && r.edges && r.edges.C).sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
@@ -4963,8 +4968,10 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const perm = SLOTS.map((x) => map.placed[x.face]);            // new box i <- old box perm[i]
     if (perm.some((j) => j == null) || new Set(perm).size !== 6 || perm.every((j, i) => j === i)) return false;
     const old = st.slots.slice(), re = (st.rechecks || []).slice();
-    st.slots = perm.map((j, i) => Object.assign(old[j], { face: SLOTS[i].face, guess: false,
-      frameRes: MirrorVision.rotateReading(old[j].res, (map.turned && map.turned[SLOTS[i].face]) || 0) }));
+    st.slots = perm.map((j, i) => {
+      const turn = (map.turned && map.turned[SLOTS[i].face]) || 0;
+      return Object.assign(old[j], { face: SLOTS[i].face, guess: false, turn, frameRes: MirrorVision.rotateReading(old[j].res, turn) });
+    });
     if (st.rechecks) st.rechecks = perm.map((j) => re[j] || 0);
     if (st.lastCheck && st.lastCheck.slot != null) st.lastCheck.slot = perm.indexOf(st.lastCheck.slot);
     if (st.flagged) st.flagged = new Set([...st.flagged].map((j) => perm.indexOf(j)));
@@ -4987,7 +4994,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (bv < 3.5) {
         const drop = bi === 0 ? bj : (st.slots[bi].t || 0) > (st.slots[bj].t || 0) ? bi : bj;
         st.dups = (st.dups || 0) + 1;
-        Object.assign(st.slots[drop], { c: null, res: null, thumb: null, warn: false, guess: false, frameRes: null });
+        Object.assign(st.slots[drop], { c: null, res: null, thumb: null, warn: false, guess: false, turn: 0, frameRes: null });
         st.flagged = null; st.allSince = 0; st.cur = drop;
         live.waitTurn = null; live.recent = [];
         renderScan();
@@ -5278,28 +5285,66 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   function close3D() { v3.on = false; cancelAnimationFrame(v3.raf); }
 
   // ---------- scan data as one picture, to send for a check ----------
+  // Where each face sits in the unfolded cube, around «Davanti»:
+  //              Sopra
+  //   Sinistra  Davanti  Destra  Dietro
+  //              Sotto
+  const NET = { U: [1, 0], L: [0, 1], F: [1, 1], R: [2, 1], B: [3, 1], D: [1, 2] };
+  // The photo of a face centred in the square x, y, S and turned by `turn` quarter turns
+  // clockwise (the same turns as rotateReading), so that it sits as in the unfolded cube.
+  function drawFace(g, c, res, x, y, S, turn) {
+    g.save();
+    g.beginPath(); g.rect(x, y, S, S); g.clip();
+    g.fillStyle = "#000"; g.fillRect(x, y, S, S);
+    if (c) {
+      let cx = c.width / 2, cy = c.height / 2, side = Math.min(c.width, c.height);
+      if (res && res.g) {
+        [cx, cy] = MirrorVision.toImage(res, 0.5 * (res.g[0] + res.g[1]), 0.5 * (res.h[0] + res.h[1]));
+        side = 4.2 * (res.g[1] - res.g[0]);
+      }
+      g.translate(x + S / 2, y + S / 2);
+      g.rotate(((turn || 0) % 4) * Math.PI / 2);
+      g.scale(S / side, S / side);
+      g.drawImage(c, -cx, -cy);
+    }
+    g.restore();
+  }
   function exportScan() {
-    const d = st.decoded, W = 900, cell = 290, top = 60;
+    const d = st.decoded, W = 960, S = 224, gap = 6, pad = 20, top = 64, blockH = 130;
+    const textTop = top + 3 * (S + gap) + 18;
     const c = document.createElement("canvas");
-    c.width = W; c.height = top + 2 * (cell + 150) + 220;
+    c.width = W; c.height = textTop + 2 * blockH + 220;
     const g = c.getContext("2d");
     g.fillStyle = "#0E1A2B"; g.fillRect(0, 0, c.width, c.height);
     g.fillStyle = "#FFFFFF"; g.font = "600 26px system-ui, sans-serif";
-    g.fillText("Calibro per Mirror Cube: dati della scansione", 20, 40);
+    g.fillText("Calibro per Mirror Cube: dati della scansione", pad, 40);
+    // the unfolded cube: every face turned so that neighbouring edges touch
     st.slots.forEach((sl, i) => {
-      const x = 10 + (i % 3) * (cell + 10), y = top + Math.floor(i / 3) * (cell + 150);
-      if (sl.c) { const k = Math.min(cell / sl.c.width, cell / sl.c.height); g.drawImage(sl.c, x, y, sl.c.width * k, sl.c.height * k); }
-      g.fillStyle = "#FFFFFF"; g.font = "600 18px system-ui, sans-serif";
-      g.fillText(`${i + 1}. ${SLOTS[i].name}`, x, y + cell + 22);
+      const [col, row] = NET[SLOTS[i].face], x = pad + col * (S + gap), y = top + row * (S + gap);
+      drawFace(g, sl.c, sl.res, x, y, S, sl.turn);
+      const label = `${i + 1}. ${SLOTS[i].name}${sl.guess ? " ?" : ""}`;
+      g.font = "600 17px system-ui, sans-serif";
+      g.fillStyle = "rgba(14,26,43,0.82)"; g.fillRect(x + 6, y + 6, g.measureText(label).width + 14, 26);
+      g.fillStyle = "#FFFFFF"; g.fillText(label, x + 13, y + 25);
+    });
+    g.fillStyle = "#C9D6DF"; g.font = "15px system-ui, sans-serif";
+    ["Il cubo aperto attorno a «Davanti»: ogni faccia", "è girata in modo che i lati vicini si tocchino.", "Le misure qui sotto seguono lo stesso verso."]
+      .forEach((t, r) => g.fillText(t, pad + 2 * (S + gap) + 10, top + 34 + r * 22));
+    // the measures of every face, in the same orientation as its picture
+    st.slots.forEach((sl, i) => {
+      const x = pad + (i % 3) * 310, y = textTop + Math.floor(i / 3) * blockH;
+      g.fillStyle = "#FFFFFF"; g.font = "600 17px system-ui, sans-serif";
+      g.fillText(`${i + 1}. ${SLOTS[i].name}${sl.guess ? " (nome incerto)" : ""}`, x, y + 18);
       g.font = "14px ui-monospace, monospace"; g.fillStyle = "#C9D6DF";
-      const e = (sl.res && sl.res.ext) || {}, line = [];
+      const r = sl.res && sl.res.ext ? MirrorVision.rotateReading(sl.res, sl.turn || 0) : null;
+      const e = (r && r.ext) || {}, line = [];
       for (const nm of ["TL", "T", "TR", "L", "R", "BL", "B", "BR"]) for (const dd in e[nm] || {}) line.push(`${nm}.${dd[0]}${e[nm][dd].toFixed(1)}`);
-      for (let r = 0; r < 4; r++) g.fillText(line.slice(r * 3, r * 3 + 3).join(" "), x, y + cell + 44 + r * 18);
+      for (let q = 0; q < 4; q++) g.fillText(line.slice(q * 3, q * 3 + 3).join(" "), x, y + 40 + q * 18);
       const pl = sl.res && sl.res.plx ? sl.res.plx.turned.length : 0;
-      g.fillText(`viste di lato: ${pl}`, x, y + cell + 120);
+      g.fillText(`viste di lato: ${pl}${sl.turn ? ` · girata di ${sl.turn * 90}°` : ""}`, x, y + 116);
     });
     g.fillStyle = "#FFFFFF"; g.font = "15px ui-monospace, monospace";
-    const y0 = top + 2 * (cell + 150) + 20;
+    const y0 = textTop + 2 * blockH + 20;
     if (d) {
       const rows = [
         `stato: ${d.facelets}`,
