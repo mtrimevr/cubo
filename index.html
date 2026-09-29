@@ -4924,9 +4924,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const vals = {};
     st.slots.forEach((sl, i) => {
       if (!sl.res || !sl.res.ok || !sl.res.ext) return;
-      const P = SLOTS[i].face;
+      const P = SLOTS[i].face, rd = sl.frameRes || sl.res;
       for (const nm in MirrorVision.STICKERS) for (const d of MirrorVision.STICKERS[nm][2]) {
-        const x = sl.res.ext[nm] && sl.res.ext[nm][d];
+        const x = rd.ext[nm] && rd.ext[nm][d];
         if (typeof x === "number") (vals[MirrorVision.TARGET[P][nm][d]] = vals[MirrorVision.TARGET[P][nm][d]] || []).push(x);
       }
     });
@@ -4943,7 +4943,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
         const idx = idxAt(P, pos), v = vals[idx];
         const isCentre = Math.abs(x) + Math.abs(y) + Math.abs(z) === 1;
         let e = v ? medianOf(v) : null;
-        if (e == null && isCentre) e = null;
+        if (e == null && isCentre) {
+          const seen = st.slots.some((x, j) => SLOTS[j].face === P && x.res && x.res.ok);
+          const mdl = st.slots[0].res ? MirrorVision.solvedModel(st.slots[0].res, CLS, THICK0) : null;
+          if (seen) e = st.decoded && st.decoded.thick ? st.decoded.thick[P] : mdl ? mdl.th[P] : THICK0[P];
+        }
         if (e == null) { full = false; e = MIDDLE; }
         if (pos[a] > 0) { lo.push(half); hi.push(half + e); } else { lo.push(-half - e); hi.push(-half); }
         stk.push([a, pos[a]]);
