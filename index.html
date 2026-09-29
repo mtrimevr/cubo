@@ -2849,7 +2849,7 @@ const MirrorVision = (() => {
       const width = (pu.a.width + pu.b.width + pv.a.width + pv.b.width) / (4 * mean);
       const off = Math.abs(0.5 * (pu.a.c + pu.b.c) - uc) / mean + Math.abs(0.5 * (pv.a.c + pv.b.c) - vc) / mean;
       const cost = 8 * mis + 2 * depth + 2 * width + 0.6 * off;
-      if (!best || cost < best.cost) best = { cost, mis, gu: { c1: pu.a.c, c2: pu.b.c, w1: pu.a.width, w2: pu.b.width }, gv: { c1: pv.a.c, c2: pv.b.c, w1: pv.a.width, w2: pv.b.width } };
+      if (!best || cost < best.cost) best = { cost, mis, vu: !!(pu.a.virtual || pu.b.virtual), vv: !!(pv.a.virtual || pv.b.virtual), gu: { c1: pu.a.c, c2: pu.b.c, w1: pu.a.width, w2: pu.b.width }, gv: { c1: pv.a.c, c2: pv.b.c, w1: pv.a.width, w2: pv.b.width } };
     }
     return best;
   }
@@ -3010,8 +3010,12 @@ const MirrorVision = (() => {
         const a = nearest(g.c1), b = nearest(g.c2);
         return a && b && a !== b ? { c1: a.c, c2: b.c, w1: a.width, w2: b.width } : g;
       };
+      const gu0 = gu, gv0 = gv;
       gu = refine(grooveGaps(ru), gu);
       gv = refine(grooveGaps(rv), gv);
+      // A groove that was only inferred (not seen) stays a guess: when a column is cut by the
+      // edge of the picture, the guess lands inside a tile and the whole grid is shifted.
+      base.virt = (pick.vu && gu === gu0) || (pick.vv && gv === gv0);
     }
     const g1 = gu.c1, g2 = gu.c2, h1 = gv.c1, h2 = gv.c2;
     const mu = g2 - g1, mv = h2 - h1, m = 0.5 * (mu + mv);
@@ -3334,6 +3338,7 @@ const MirrorVision = (() => {
     return { rss, alpha, beta, n };
   }
 
+  const SOLVED = ORDER.split("").map((f) => f.repeat(9)).join("");
   // No calibration and no marks: try every orientation and both mirror versions of the
   // cube, keep the ones whose pieces fit, then let the centre heights pick the orientation.
   function decodeAuto(faces, cls, rel) {
@@ -3351,10 +3356,15 @@ const MirrorVision = (() => {
     const pool = cands.filter((c) => c.cost <= best + 1 + 1e-6 * best);
     for (const c of pool) c.fit = heightFit(faces, c.th, c.d.facelets);
     pool.sort((p, q) => p.fit.rss - q.fit.rss);
-    const win = pool[0], second = pool[1];
+    let win = pool[0], second = pool[1];
     const sigma2 = 0.007 ** 2;   // measured on real photos of flat faces
-    const margin = second ? (second.fit.rss - win.fit.rss) / sigma2 : Infinity;
-    return Object.assign({}, win.d, { thick: win.th, frame: { pool: pool.length, margin, alpha: win.fit.alpha, beta: win.fit.beta, rss: win.fit.rss, pairs: win.fit.n } });
+    let margin = second ? (second.fit.rss - win.fit.rss) / sigma2 : Infinity;
+    // On a solved cube every face is flat, so the centre heights cannot tell the orientations
+    // apart, and the other orientations are only the solved cube with its pieces renamed. When
+    // the pieces fit a solved cube just as well, that is the answer, and there is no doubt.
+    const solvedC = pool.find((c) => c.d.facelets === SOLVED);
+    if (solvedC) { win = solvedC; margin = Infinity; }
+    return Object.assign({}, win.d, { thick: win.th, frame: { pool: pool.length, margin, alpha: win.fit.alpha, beta: win.fit.beta, rss: win.fit.rss, pairs: win.fit.n, solved: !!solvedC } });
   }
 
   const ROT90 = { TL: "TR", T: "R", TR: "BR", R: "B", BR: "BL", B: "L", BL: "TL", L: "T" };
@@ -3541,10 +3551,10 @@ const MirrorVision = (() => {
     const lever = extra.filter((e) => e.key !== "plx" && Math.abs(d.thick[d.facelets[e.idx]] - d.thick[e.P]) > 5).length;
     d.persp = lever >= 4 ? { n: nPersp, bad: bad.filter((b) => b.key !== "plx" && !withPlx.has(b.idx)) } : { n: 0, bad: [], off: true };
     d.plx = { n: plxInfo.length, bad: plxInfo.filter((e) => Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 8) };
-    const placed = { F: 0 };
-    others.forEach((P, i) => { placed[P] = best.t.perm[i]; });
+    const placed = { F: 0 }, turned = { F: 0 };
+    others.forEach((P, i) => { placed[P] = best.t.perm[i]; turned[P] = (best.t.code >> (2 * i)) & 3; });
     const second = top.find((t) => t !== best.t);
-    return Object.assign(d, { layout: { placed, pairCost: best.t.c, secondPairCost: second ? second.c : Infinity } });
+    return Object.assign(d, { layout: { placed, turned, pairCost: best.t.c, secondPairCost: second ? second.c : Infinity } });
   }
 
   // ---------- parallax: depth of every tile from a slightly turned view ----------
@@ -4009,7 +4019,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
 
   function newScan() {
     st.calib = false;
-    st.rechecks = null; st.round = 0; st.lastCheck = null; st.flagged = null; st.allSince = 0;
+    st.rechecks = null; st.round = 0; st.lastCheck = null; st.flagged = null; st.allSince = 0; st.dups = 0;
     st.slots = SLOTS.map((s) => ({ face: s.face, c: null, res: null, thumb: null }));
     st.cur = 0; st.still = null; st.decoded = null;
     $("#scanResult").innerHTML = "";
@@ -4496,7 +4506,73 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const v = reads.map((r) => r.ext && r.ext[nm] && r.ext[nm][d]).filter((x) => typeof x === "number");
       if (v.length >= 3) spreads.push(Math.max(...v) - Math.min(...v));
     }
-    return spreads.length >= 6 && medianOf(spreads) <= 3;
+    // every measure must hold still, not only most of them
+    return spreads.length >= 6 && medianOf(spreads) <= 3 && Math.max(...spreads) <= 7;
+  }
+  // The box of a face already confirmed that reading x shows again, or -1 (box `skip` excluded).
+  // The old test (median and outliers) took two different faces that share half of their
+  // measures for the same one, 6 times in the real scans: the new face was refused, the scan
+  // stalled. Measure by measure agreement never did. On a solved cube the neighbours also name
+  // every face: a name already taken means the same face seen again.
+  function seenBefore(x, skip) {
+    const j = st.slots.findIndex((o, i) => i !== skip && o.res && o.res.ok && (alignTo(o.res, x) >= 0 || nearlyAll(o.res, x)));
+    if (j >= 0) return j;
+    const f = st.slots[0].res && st.slots[0].res.ok ? st.slots[0].res : null;
+    const mdl = f && MirrorVision.solvedModel(f, CLS, THICK0);
+    const ns = mdl && MirrorVision.nameSolved(mdl, x);
+    if (!ns || ns.v >= 3 || ns.gap < 1.5) return -1;
+    return st.slots.findIndex((o, i) => {
+      if (i === skip || i === 0 || !o.res || !o.res.ok) return false;
+      const n2 = MirrorVision.nameSolved(mdl, o.res);
+      return n2 && n2.P === ns.P && n2.v < 3 && n2.gap >= 1.5;
+    });
+  }
+  // The same face with one wild measure: all the other measures agree closely
+  // (real scan: the face in front came back with one corner off by 12 points and was taken
+  // for a new face). Two different faces differ on a whole side, so they do not pass.
+  function nearlyAll(a, b) {
+    if (!a || !b || !a.ext || !b.ext) return false;
+    for (let k = 0; k < 4; k++) {
+      const rb = k ? MirrorVision.rotateReading(b, k).ext : b.ext, d = [];
+      for (const nm in a.ext) for (const dd in a.ext[nm]) { const y = rb[nm] && rb[nm][dd]; if (typeof y === "number") d.push(Math.abs(a.ext[nm][dd] - y)); }
+      if (d.length < 10) continue;
+      d.sort((p, q) => p - q);
+      const rest = d.slice(0, d.length - 1);
+      if (rest[rest.length - 1] <= 3.5 && rest.reduce((p, q) => p + q, 0) / rest.length < 1.8) return true;
+    }
+    return false;
+  }
+  // Where a face not seen before goes: the current box if it is empty or being read again.
+  // With all six boxes full, a new face means that one face was read twice: it replaces the
+  // later of the two most alike boxes. If no two boxes look alike, the reading is ignored.
+  function boxForNew(cur) {
+    if (!st.slots[cur].res || (st.flagged && st.flagged.has(cur))) return cur;
+    const free = nextOpen(-1);
+    if (free >= 0) return free;
+    let bi = -1, bj = -1, bv = Infinity;
+    for (let i = 0; i < 6; i++) for (let j = i + 1; j < 6; j++) {
+      const v = MirrorVision.sameFace(st.slots[i].res, st.slots[j].res, 6);
+      if (v < bv) { bv = v; bi = i; bj = j; }
+    }
+    if (bv >= 3.5 || (st.dups || 0) >= 3) return -1;
+    st.dups = (st.dups || 0) + 1;
+    return bi === 0 ? bj : (st.slots[bi].t || 0) > (st.slots[bj].t || 0) ? bi : bj;
+  }
+  // Quarter turns that bring reading b onto reading a, if the two agree measure by measure
+  // (at most one measure off by more than 4 points, none by more than 7), else -1.
+  // On the real scans this told the same face from any other face in every case.
+  function alignTo(a, b) {
+    if (a === b) return 0;
+    if (!a || !b || !a.ext || !b.ext) return -1;
+    let best = -1, bs = Infinity;
+    for (let k = 0; k < 4; k++) {
+      const rb = k ? MirrorVision.rotateReading(b, k).ext : b.ext, d = [];
+      for (const nm in a.ext) for (const dd in a.ext[nm]) { const y = rb[nm] && rb[nm][dd]; if (typeof y === "number") d.push(Math.abs(a.ext[nm][dd] - y)); }
+      if (d.length < 8) continue;
+      const s = d.reduce((p, q) => p + q, 0) / d.length;
+      if (d.filter((x) => x > 4).length <= 1 && Math.max(...d) <= 7 && s < 2.5 && s < bs) { bs = s; best = k; }
+    }
+    return best;
   }
 
   function onLiveResult(id, res) {
@@ -4517,7 +4593,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       return;
     }
     const slot = st.cur;
-    let msg = null, bad = !res.ok;
+    let msg = null, bad = !res.ok, whole = false;
     if (res.ok) {
       const box = faceBox(res, job);
       const bw = box.x1 - box.x0, bh = box.y1 - box.y0, mx = 0.4 * Math.max(bw, bh);
@@ -4525,9 +4601,23 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       live.roi = { x: x0, y: y0, w: Math.min(v.videoWidth, box.x1 + mx) - x0, h: Math.min(v.videoHeight, box.y1 + mx) - y0 };
       live.roiT = now;
       if (Math.max(bw, bh) < 0.18 * Math.min(v.videoWidth, v.videoHeight)) { msg = "avvicinati un po', a circa 30 cm"; bad = true; }
+      // Only a face seen whole can vote: every groove really seen (not guessed) and at most one
+      // tile hidden. A face cut by the edge of the picture gives a shifted grid whose measures
+      // look plausible but are wrong (real scan: a wrong face confirmed, then read twice).
+      const cells = res.edges ? Object.keys(res.edges).length : 0;
+      whole = !res.virt && cells >= 8 && (res.missing || 0) <= 2;
+      if (!msg && !whole) {
+        const e = 0.03 * Math.min(v.videoWidth, v.videoHeight);
+        const edge = box.x0 < e || box.y0 < e || box.x1 > v.videoWidth - e || box.y1 > v.videoHeight - e;
+        msg = edge || res.virt ? "allontanati un po', la faccia esce dall'inquadratura" : "un tassello non si vede: sposta le dita sul bordo del cubo ed evita i riflessi";
+        bad = true;
+      }
     }
     // Readings that look like a face already confirmed: the cube has not been turned yet.
-    const already = (x) => st.slots.findIndex((o, j) => j !== slot && o.res && o.res.ok && MirrorVision.sameFaceStrict(x, o.res));
+    // Only a box being read again is left out of the comparison: once all six boxes are full
+    // the current box is just box 1, and leaving it out let another face overwrite it.
+    const redo = !!(st.flagged && st.flagged.has(slot));
+    const already = (x) => seenBefore(x, redo ? slot : -1);
     if (res.ok && !msg) {
       const sz = res.sizes || {}, ks = [];
       if (sz.T && sz.B) ks.push(Math.abs(Math.log(sz.T.c / sz.B.c)));
@@ -4538,9 +4628,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12 || oblique) { collectTurned(res, now); msg = "continua a ruotare piano"; bad = true; }
     }
     // 2) after a confirmation, wait until the cube has really been turned
-    if (live.waitTurn && res.ok) {
+    if (live.waitTurn && whole) {
       const prev = st.slots[live.waitTurn.slot].res;
-      if (MirrorVision.sameFaceStrict(res, prev)) { live.waitTurn.seen = now; if (!msg) msg = "girato? Mostrami la faccia successiva"; bad = true; }
+      if (alignTo(prev, res) >= 0) { live.waitTurn.seen = now; if (!msg) msg = "girato? Mostrami la faccia successiva"; bad = true; }
       else live.waitTurn = null;
     } else if (live.waitTurn && now - live.waitTurn.seen > 250) live.waitTurn = null;
     if (res.ok && !msg) {
@@ -4556,9 +4646,16 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       // with each other. A single wrong reading (odd angle, reflection) cannot win the vote.
       live.recent = (live.recent || []).filter((x) => now - x.t < 1600);
       live.recent.push({ res, t: now });
+      // The group must agree measure by measure with one of its readings (turned to the same
+      // orientation): an average test let a mirror face or a wrong reading join the group,
+      // and the merged face came out wrong.
       let group = [];
       for (const a of live.recent) {
-        const g = live.recent.filter((b) => MirrorVision.sameFace(a.res, b.res, 6) < 3.5);
+        const g = [];
+        for (const b of live.recent) {
+          const k = alignTo(a.res, b.res);
+          if (k >= 0) g.push({ t: b.t, res: k ? Object.assign(MirrorVision.rotateReading(b.res, k), { aligned: k }) : b.res });
+        }
         if (g.length > group.length) group = g;
       }
       const reads = group.map((x) => x.res);
@@ -4568,9 +4665,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (c.frac >= 1 && consistent(reads)) {
         const twin = already(c.merged, 5);
         if (twin >= 0) { live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: twin, t: now }; return; }
-        const done = slot;
-        live.last = res; confirmLive(c, job); live.recent = [];
-        live.waitTurn = { slot: done, seen: now };
+        const to = boxForNew(slot);
+        if (to < 0) { live.recent = []; live.cand = null; live.last = res; return; }
+        st.cur = to;
+        live.last = res; const done = confirmLive(c, job); live.recent = [];
+        live.waitTurn = { slot: done, seen: now };   // the box that really got the face
         return;
       }
       msg = c.cov.full < MEAS.length && span > 900
@@ -4701,7 +4800,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       // from the thickness of their neighbours, starting from the first face
       const mdl = MirrorVision.solvedModel(st.slots[0].res, CLS, THICK0);
       const ns = mdl && MirrorVision.nameSolved(mdl, r);
-      if (ns && ns.v < 4 && ns.gap > 1.2 && !placed[ns.P]) { P = ns.P; k = ns.k; }
+      if (ns && ns.v < 4 && ns.gap > 1.2 && !placed[ns.P]) { P = ns.P; k = (4 - ns.k) % 4; }
       else if (Object.keys(placed).length >= 3) {
         const free0 = ["R", "B", "L", "U", "D"].filter((F) => !placed[F] && !all.some((q) => q.P === F && q.n > 0));
         if (free0.length === 1 && (!best || best.c >= 10)) P = free0[0];
@@ -4710,26 +4809,32 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const j = P ? SLOTS.findIndex((x) => x.face === P) : -1;
     const slot = j >= 0 && !st.slots[j].res ? j : fallback;
     r.__rot = slot === j ? k : 0;
+    r.__guess = slot !== j;       // first free box: the real name comes later, from the geometry
     return slot;
   }
   function confirmLive(c, job) {
     let slot = st.cur;
-    const lastRes = c.reads.slice().sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
+    const own = c.reads.filter((r) => !r.aligned);
+    const lastRes = (own.length ? own : c.reads).slice().sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
     const merged = mergeReadings(c.reads);
     const final = Object.assign({}, lastRes, merged, { ok: true, missing: lastRes.missing || 0 });
     delete final.job;
     const canvas = lastRes.job ? lastRes.job.crop : job.crop;
     slot = chooseSlot(final, slot);
-    Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false, frameRes: MirrorVision.rotateReading(final, final.__rot || 0) });
+    const guess = !!final.__guess && !(st.flagged && st.flagged.has(slot));
+    delete final.aligned; delete final.__guess;
+    Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false, guess, t: performance.now(), frameRes: MirrorVision.rotateReading(final, final.__rot || 0) });
     live.cand = null;
     beep(); flash();
-    const fr = c.reads.filter((r) => r.edges && r.edges.C).sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
+    const fr = c.reads.filter((r) => !r.aligned && r.edges && r.edges.C).sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
     renderScan();
     st.slots[slot].res.plx = { front: fr ? { res: { g: fr.g, h: fr.h }, edges: fr.edges } : null, turned: [] };
     if (st.flagged) st.flagged.delete(slot);
     live.lastFace = { slot, t: performance.now() };
-    toast(`Faccia vista: ${SLOTS[slot].name}`);
+    const nDone = st.slots.filter((x) => x.res && x.res.ok).length;
+    toast(guess ? `Faccia vista: ${nDone} di 6` : `Faccia vista: ${SLOTS[slot].name}`);
     advanceLive(slot);
+    return slot;
   }
   // Turned views of the face that was just in front of the camera: they give the parallax.
   function collectTurned(res, now) {
@@ -4836,10 +4941,63 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     live.tip = `${SLOTS[T.slot].name}: ${msg} (viste di lato ${T.views.length} di 4)`;
     live.last = res;
   }
+  // Put every face under its real name. A face that could not be placed when it was confirmed
+  // went to the first free box, so its name was only a guess (real scan: «Destra» held the face
+  // behind, and asking to see «Destra» again could not work). On a solved cube the neighbours
+  // and the handedness of the cube name every face; otherwise the layout of the six faces does.
+  function renameSlots(d) {
+    let map = null;
+    const f = st.slots[0].res, mdl = f && MirrorVision.solvedModel(f, CLS, THICK0);
+    if (mdl) {
+      const placed = { F: 0 }, turned = { F: 0 };
+      let ok = true;
+      for (let j = 1; j < 6 && ok; j++) {
+        const ns = MirrorVision.nameSolved(mdl, st.slots[j].res);
+        if (!ns || ns.v >= 4 || ns.gap < 1.2 || placed[ns.P] != null) ok = false;
+        else { placed[ns.P] = j; turned[ns.P] = (4 - ns.k) % 4; }
+      }
+      if (ok) map = { placed, turned };
+    }
+    if (!map && d && d.layout && d.layout.pairCost < 6 && d.layout.secondPairCost > d.layout.pairCost + 1) map = d.layout;
+    if (!map) return false;
+    const perm = SLOTS.map((x) => map.placed[x.face]);            // new box i <- old box perm[i]
+    if (perm.some((j) => j == null) || new Set(perm).size !== 6 || perm.every((j, i) => j === i)) return false;
+    const old = st.slots.slice(), re = (st.rechecks || []).slice();
+    st.slots = perm.map((j, i) => Object.assign(old[j], { face: SLOTS[i].face, guess: false,
+      frameRes: MirrorVision.rotateReading(old[j].res, (map.turned && map.turned[SLOTS[i].face]) || 0) }));
+    if (st.rechecks) st.rechecks = perm.map((j) => re[j] || 0);
+    if (st.lastCheck && st.lastCheck.slot != null) st.lastCheck.slot = perm.indexOf(st.lastCheck.slot);
+    if (st.flagged) st.flagged = new Set([...st.flagged].map((j) => perm.indexOf(j)));
+    live.lastFace = null; live.waitTurn = null;
+    renderScan();
+    return true;
+  }
   // All six faces are in: check them together; if something does not add up, go back to the
   // face with the most doubts and read it again, until everything agrees.
   function liveCheck() {
-    const d = MirrorVision.decodeFree(st.slots.map((x) => x.res), CLS);
+    let d = MirrorVision.decodeFree(st.slots.map((x) => x.res), CLS);
+    // One face read twice (so one is missing): the six faces cannot fit together. The two most
+    // alike boxes are the suspects: the one confirmed later is emptied and the scan goes on.
+    if (d.layout.pairCost > 6 && (st.dups || 0) < 2) {
+      let bi = -1, bj = -1, bv = Infinity;
+      for (let i = 0; i < 6; i++) for (let j = i + 1; j < 6; j++) {
+        const v = MirrorVision.sameFace(st.slots[i].res, st.slots[j].res, 6);
+        if (v < bv) { bv = v; bi = i; bj = j; }
+      }
+      if (bv < 3.5) {
+        const drop = bi === 0 ? bj : (st.slots[bi].t || 0) > (st.slots[bj].t || 0) ? bi : bj;
+        st.dups = (st.dups || 0) + 1;
+        Object.assign(st.slots[drop], { c: null, res: null, thumb: null, warn: false, guess: false, frameRes: null });
+        st.flagged = null; st.allSince = 0; st.cur = drop;
+        live.waitTurn = null; live.recent = [];
+        renderScan();
+        setPill("warn", "Una faccia letta due volte");
+        toast("Ho letto due volte la stessa faccia: me ne manca una");
+        live.tip = "Ho letto due volte la stessa faccia: continua a ruotare piano e mostrami quella che manca";
+        return;
+      }
+    }
+    if (renameSlots(d)) d = MirrorVision.decodeFree(st.slots.map((x) => x.res), CLS);
     const slotOf = (letter) => d.layout.placed[letter];
     // every disagreement involves two faces: where the width was measured and where the
     // parallax was measured. If re-reading a face did not change the disagreements, the
