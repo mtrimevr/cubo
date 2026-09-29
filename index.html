@@ -296,6 +296,9 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
           <button class="btn wide" type="button" data-act="view3d" id="btn3d">Vedi il cubo in 3D</button>
         </div>
         <div class="actions">
+          <button class="btn wide" type="button" data-act="startpos">Trova la faccia di partenza</button>
+        </div>
+        <div class="actions">
           <button class="btn wide" type="button" data-act="check">Controlla con la fotocamera</button>
         </div>
         <div class="actions">
@@ -3873,8 +3876,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (vals) out += `<text x="${x + s / 2}" y="${y + s / 2 + 4}" text-anchor="middle" font-size="11" font-weight="600" font-family="'Barlow Semi Condensed',Barlow,system-ui,sans-serif" style="fill:${onDark ? "#E9F0F4" : "var(--ink)"}">${fmt(vals[f])}</text>`;
     }
     if (!vals) {
-      const lab = (f, t) => `<text x="${pos[f][0] * (s + g) + s / 2}" y="${pos[f][1] * (s + g) + s / 2 + 4}" text-anchor="middle" font-size="8.5" font-family="Barlow,system-ui,sans-serif" style="fill:${onDark ? "#DCE6ED" : "var(--graphite)"}">${t}</text>`;
-      out += lab("F", "davanti") + lab("U", "sopra");
+      const lab = (f, t) => `<text x="${pos[f][0] * (s + g) + s / 2}" y="${pos[f][1] * (s + g) + s / 2 + 4}" text-anchor="middle" font-size="8" font-family="Barlow,system-ui,sans-serif" style="fill:${onDark ? "#DCE6ED" : "var(--graphite)"}">${t}</text>`;
+      out += lab("F", "davanti") + lab("U", "sopra") + lab("D", "sotto") + lab("L", "sinistra") + lab("R", "destra") + lab("B", "dietro");
     }
     return out + "</svg>";
   }
@@ -4367,7 +4370,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
 
   async function startLive(opt = {}) {
-    live.check = !!opt.check; live.chk = null; live.chkMsg = "";
+    live.check = !!opt.check; live.start = !!opt.start; live.chk = null; live.chkMsg = ""; live.depthFor = null;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { liveUnavailable(); return; }
     try { live.audio = live.audio || new (window.AudioContext || window.webkitAudioContext)(); live.audio.resume(); } catch (e) { /* ignore */ }
     let stream;
@@ -4588,6 +4591,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const now = performance.now(), v = live.video;
     res.job = job;
     if (live.check) { handleCheck(res, now); return; }
+    // the depth of a face that does not come (reflections, a hand in the way) is measured later
+    if (live.depthFor && now - live.depthFor.t0 > 12000) { toast(`Passa pure alla faccia successiva: la profondità di «${SLOTS[live.depthFor.slot].name}» la misuro dopo`); live.depthFor = null; }
+    // With all six faces in, the final check must also start when the side views are late
+    // (after 15 s), not only when a new side view arrives: in the real scan of a mixed cube
+    // no side view came any more and the page waited for ever.
+    if (!live.turnPh && !st.calib && nextOpen(-1) < 0) { maybeCheck(now); if (!live.on) return; }
     if (live.turnPh) {
       if (res.g) {
         const box = faceBox(res, job), bw = box.x1 - box.x0, bh = box.y1 - box.y0, mx = 0.4 * Math.max(bw, bh);
@@ -4631,12 +4640,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const sq = Math.abs((res.g[1] - res.g[0]) - (res.h[1] - res.h[0])) / res.m;
       const fl = Object.values(res.edges || {}).map((b) => b.n / Math.max(1, (b.u1 - b.u0 + 1) * (b.v1 - b.v0 + 1))).sort((a, b) => a - b);
       const oblique = fl.length < 5 || fl[fl.length >> 1] < 0.8 || fl[0] < 0.7;
-      if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12 || oblique) { collectTurned(res, now); msg = "continua a ruotare piano"; bad = true; }
+      if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12 || oblique) { collectTurned(res, now); msg = live.depthFor ? "così, inclinalo anche nelle altre direzioni: in su, in giù, a destra e a sinistra" : "continua a ruotare piano"; bad = true; }
     }
     // 2) after a confirmation, wait until the cube has really been turned
     if (live.waitTurn && whole) {
       const prev = st.slots[live.waitTurn.slot].res;
-      if (alignTo(prev, res) >= 0) { live.waitTurn.seen = now; if (!msg) msg = "girato? Mostrami la faccia successiva"; bad = true; }
+      if (alignTo(prev, res) >= 0) { live.waitTurn.seen = now; if (!msg) msg = live.depthFor ? "ora inclina un po' il cubo, circa 20 gradi: in su, in giù, a destra e a sinistra" : "girato? Mostrami la faccia successiva"; bad = true; }
       else live.waitTurn = null;
     } else if (live.waitTurn && now - live.waitTurn.seen > 250) live.waitTurn = null;
     if (res.ok && !msg) {
@@ -4671,6 +4680,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (c.frac >= 1 && consistent(reads)) {
         const twin = already(c.merged, 5);
         if (twin >= 0) { live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: twin, t: now }; return; }
+        if (live.depthFor) { live.recent = []; live.cand = null; live.last = res; live.tip = `Prima finisco «${SLOTS[live.depthFor.slot].name}»: torna su quella faccia e inclinala un po'`; return; }
         const to = boxForNew(slot);
         if (to < 0) { live.recent = []; live.cand = null; live.last = res; return; }
         st.cur = to;
@@ -4687,7 +4697,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     }
     live.last = res;
     // free rotation: no fixed order, the tip only says what the page is doing
-    live.tip = msg === "tieni fermo…" ? "Faccia nuova: tienila ferma un attimo…" : msg.charAt(0).toUpperCase() + msg.slice(1);
+    live.tip = msg === "tieni fermo…" ? (live.depthFor ? `Prima finisco «${SLOTS[live.depthFor.slot].name}»: torna su quella faccia e inclinala un po'` : "Faccia nuova: tienila ferma un attimo…") : msg.charAt(0).toUpperCase() + msg.slice(1);
   }
 
   const STC = { none: "rgba(0,0,0,.45)", front: "#F2C94C", done: "#3DDC84", bad: "#FF5A5F", new: "#FFFFFF" };
@@ -4709,6 +4719,19 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   function drawTiles(r, map, k) {
     const e = r.edges;
     if (!e) return;
+    // Seen from the side, a piece that sticks out (or sinks) moves against the centre tile: the
+    // shift is its depth. Its foot, at the level of the centre, gets a second ring of dots, with a
+    // line from each corner: the dots show every level of the face, not only its surface.
+    const fr = k >= 0 && st.slots[k].res && st.slots[k].res.plx && st.slots[k].res.plx.front;
+    const pv = fr && fr.edges && e.C && r.g ? MirrorVision.parallaxView(fr, { res: { g: r.g, h: r.h }, edges: e }) : null;
+    const steps = {};
+    if (pv && Math.acos(Math.max(-1, Math.min(1, pv.cosEst))) * 180 / Math.PI >= 6) {
+      const m = r.g[1] - r.g[0];
+      for (const row of pv.rows) {
+        const dz = 0.5 * ((row.lo1 - row.lo0 * pv.cosEst) + (row.hi1 - row.hi0 * pv.cosEst)) * pv.s;
+        if (Math.abs(dz) > 0.05 * m) steps[row.nm] = dz;
+      }
+    }
     ctx.save();
     for (const nm in e) {
       const b = e[nm], col = STC[tileStatus(k, nm)];
@@ -4717,6 +4740,17 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       ctx.globalAlpha = 0.26; ctx.beginPath(); cs.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill();
       ctx.globalAlpha = 1;
       for (const [x, y] of cs) { ctx.beginPath(); ctx.arc(x, y, 3.4 * dpr, 0, 2 * Math.PI); ctx.fill(); }
+      const dz = steps[nm];
+      if (dz) {
+        const inn = [[b.u0, b.v0], [b.u1, b.v0], [b.u1, b.v1], [b.u0, b.v1]].map(([u, v]) => {
+          const q = pv.axis === "u" ? MirrorVision.toImage(r, u - dz, v) : MirrorVision.toImage(r, u, v - dz);
+          return map(q[0], q[1]);
+        });
+        ctx.strokeStyle = col; ctx.lineWidth = 1.4 * dpr; ctx.globalAlpha = 0.75;
+        cs.forEach(([x, y], i) => { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(inn[i][0], inn[i][1]); ctx.stroke(); });
+        ctx.globalAlpha = 1;
+        for (const [x, y] of inn) { ctx.beginPath(); ctx.arc(x, y, 3 * dpr, 0, 2 * Math.PI); ctx.stroke(); }
+      }
     }
     ctx.restore();
   }
@@ -4838,7 +4872,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     live.lastFace = { slot, t: performance.now() };
     const nDone = st.slots.filter((x) => x.res && x.res.ok).length;
     toast(guess ? `Faccia vista: ${nDone} di 6` : `Faccia vista: ${SLOTS[slot].name}`);
+    live.depthFor = st.calib ? null : { slot, t0: performance.now() };
     advanceLive(slot);
+    if (live.depthFor) live.tip = `Ora inclina un po' il cubo, in su, in giù, a destra e a sinistra: misuro la profondità di «${SLOTS[slot].name}»`;
     return slot;
   }
   // Turned views of the face that was just in front of the camera: they give the parallax.
@@ -4860,7 +4896,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (dir) px.dirs.add(dir);
     px.turned.push({ res: { g: res.g, h: res.h }, edges: res.edges });
     px.lastT = now;
-    if (px.turned.length === 2) { beep(); toast(`«${SLOTS[lf.slot].name}» completa`); renderScan(); }
+    if (px.turned.length === 2) {
+      beep(); renderScan();
+      const more = nextOpen(-1) >= 0;
+      toast(`«${SLOTS[lf.slot].name}» completa${more ? ": passa alla faccia successiva" : ""}`);
+      if (live.depthFor && live.depthFor.slot === lf.slot) { live.depthFor = null; if (more) live.tip = `«${SLOTS[lf.slot].name}» completa: ora passa alla faccia successiva`; }
+    }
     maybeCheck(now);
   }
   // With all six faces and a few side views each, check the whole cube.
@@ -4900,13 +4941,27 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const mv = st.sol.finished ? null : st.sol.moves[st.sol.i];
     let msg, ok = false;
     if (!best || best.v >= 4) msg = explainMistake(meas) || "Non corrisponde a nessuna faccia attesa: forse una mossa precedente non è venuta giusta. Torna indietro di una mossa e ricontrolla.";
-    else if (best.P === "F" && best.k === 0) { ok = true; msg = mv ? `Giusto! Il cubo è nella posizione corretta: ora fai ${mv}.` : "Giusto! Il cubo è come deve essere."; }
-    else if (best.P === "F") msg = best.k === 2 ? "È la faccia giusta, ma capovolta: ruota il cubo di mezzo giro tenendola rivolta verso di te." : "È la faccia giusta, ma girata di un quarto: ruota il cubo tenendola rivolta verso di te, finché torna come nella prima foto.";
-    else msg = `Stai guardando la faccia «${NAME[best.P]}»: rimetti davanti la faccia della prima foto.`;
+    else if (best.P === "F" && best.k === 0) {
+      ok = true;
+      msg = live.start ? `Sei nella posizione di partenza: «Davanti» verso di te e «Sopra» in alto.${mv ? ` Ora fai ${mv}.` : ""}`
+        : mv ? `Giusto! Il cubo è nella posizione corretta: ora fai ${mv}.` : "Giusto! Il cubo è come deve essere.";
+    }
+    else if (best.P === "F") msg = `«Davanti» è quella giusta, ma ${best.k === 2 ? "è capovolta: ruota il cubo di mezzo giro" : `è girata: ruota il cubo di un quarto di giro in senso ${best.k === 1 ? "antiorario" : "orario"}`}, tenendola verso di te.`;
+    else msg = `Stai guardando «${NAME[best.P]}»: ${howToFront(best.P, best.k)}.`;
     if (live.chkMsg !== msg) { live.chkMsg = msg; if (ok) beep(); }
     live.tip = msg;
     setPill(ok ? "ok" : "warn", ok ? "Posizione giusta" : "Posizione da correggere");
     c.reads = c.reads.slice(-4);
+  }
+  // How to turn the whole cube so that «Davanti» comes in front, when the camera sees face P
+  // turned by k quarter turns clockwise (neighbours of every face as in the unfolded cube:
+  // up, right, down, left).
+  const NEIGH = { U: ["B", "R", "F", "L"], R: ["U", "B", "D", "F"], F: ["U", "R", "D", "L"], D: ["F", "R", "B", "L"], L: ["U", "F", "D", "B"], B: ["U", "L", "D", "R"] };
+  function howToFront(P, k) {
+    if (P === "B") return "è la faccia opposta, gira il cubo di mezzo giro verso destra o verso sinistra";
+    const at = (NEIGH[P].indexOf("F") + k) % 4;
+    return ["inclina il cubo verso di te, così la faccia in alto viene davanti", "gira il cubo verso sinistra di un quarto di giro",
+      "inclina il cubo lontano da te, così la faccia in basso viene davanti", "gira il cubo verso destra di un quarto di giro"][at];
   }
   function advanceLive(slot) {
     live.waitTurn = { slot, seen: performance.now() };
@@ -4995,7 +5050,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
         const drop = bi === 0 ? bj : (st.slots[bi].t || 0) > (st.slots[bj].t || 0) ? bi : bj;
         st.dups = (st.dups || 0) + 1;
         Object.assign(st.slots[drop], { c: null, res: null, thumb: null, warn: false, guess: false, turn: 0, frameRes: null });
-        st.flagged = null; st.allSince = 0; st.cur = drop;
+        st.flagged = null; st.allSince = 0; st.cur = drop; live.depthFor = null;
         live.waitTurn = null; live.recent = [];
         renderScan();
         setPill("warn", "Una faccia letta due volte");
@@ -5629,6 +5684,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     else if (act === "sharevideo") shareVideo();
     else if (act === "calib") { newScan(); st.calib = true; startLive(); toast("Ricalibrazione: mostrami le sei facce del cubo RISOLTO"); }
     else if (act === "check") startLive({ check: true });
+    else if (act === "startpos") startLive({ check: true, start: true });
     else if (act === "view3d") {
       v3.on = !v3.on;
       $("#btn3d").textContent = v3.on ? "Torna al disegno della mossa" : "Vedi il cubo in 3D";
