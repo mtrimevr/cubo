@@ -3535,6 +3535,17 @@ const MirrorVision = (() => {
       const nameOf = (nm) => { let x = nm; for (let q = 0; q < kk; q++) x = ROT90[x]; return x; };
       const known = {};
       for (const nm of Object.keys(POS)) if (nm !== "C") known[nm] = d.thick[d.facelets[fi * 9 + POS[nameOf(nm)]]] - d.thick[P];
+      // heights measured on the face itself from views all round it (phone motion sensors):
+      // independent of this decode, so they can correct it
+      if (r.orbit && r.orbit.z) {
+        for (const nm in r.orbit.z) {
+          if (!(nm in POS) || nm === "C") continue;
+          const idx = fi * 9 + POS[nameOf(nm)], est = d.thick[P] + r.orbit.z[nm];
+          extra.push({ idx, x: est, w: 2, P, key: "plx" });
+          plxInfo.push({ idx, est, P, slot: j });
+        }
+        return;
+      }
       const pf = parallaxFace(r.plx.front, r.plx.turned || [], known);
       for (const nm in pf.tiles) {
         const idx = fi * 9 + POS[nameOf(nm)];
@@ -3990,6 +4001,100 @@ const MirrorVision = (() => {
     }
   }
 
+  // ---------- heights of the tiles of one face, from views whose turn is known (gyroscope) ----------
+  // front: { res: { g, h }, edges } frontal view. views: [{ edges, a, b }] with a, b = tan of the
+  // turn of the face along the grid axes u (right) and v (down) of that view: where the face looks
+  // (from the phone's motion sensors, the cube held still). Positions are measured from the centre
+  // tile and scaled by its size along each axis in every view (zoom and the shortening of the face
+  // plane go away): what is left is the parallax, height * (a, b). A tile higher than its neighbour
+  // covers the neighbour's edge when it moves towards it: those edge readings are left out.
+  // Returns { z: { TL: %, ... } (> 0 sticks out towards the camera, % of the side, from the centre
+  // tile), n: views, fit: rms residual in % } or null.
+  function orbitHeightsGyro(front, views, opt = {}) {
+    const e0 = front && front.edges;
+    if (!e0 || !e0.C || !front.res || !front.res.g) return null;
+    const C0 = e0.C, w0 = C0.u1 - C0.u0, h0 = C0.v1 - C0.v0;
+    const toPct = 33.6 / (front.res.g[1] - front.res.g[0]);
+    const GRID = { TL: [0, 0], T: [0, 1], TR: [0, 2], L: [1, 0], C: [1, 1], R: [1, 2], BL: [2, 0], B: [2, 1], BR: [2, 2] };
+    const AT = {}; for (const nm in GRID) AT[GRID[nm].join(",")] = nm;
+    const names = Object.keys(e0).filter((nm) => nm !== "C" && GRID[nm]);
+    // observations: [tile, axis (0 u, 1 v), side (0 low edge, 1 high edge), residual, a or b]
+    const obs = [];
+    let nv = 0;
+    for (const v of views) {
+      const e = v.edges;
+      if (!e || !e.C || typeof v.a !== "number" || typeof v.b !== "number") continue;
+      const C = e.C, w = C.u1 - C.u0, h = C.v1 - C.v0;
+      if (!(w > 0.55 * w0 && h > 0.55 * h0 && w < 1.8 * w0 && h < 1.8 * h0)) continue;
+      let k = 0;
+      for (const nm of names) {
+        const p = e0[nm], q = e[nm];
+        if (!q) continue;
+        // a tile that looks much bigger or smaller than from the front is another patch of gold
+        // (the next face, a neighbour joined to it) or mostly hidden: not this tile
+        const ru = ((q.u1 - q.u0) / w) * w0 / Math.max(1, p.u1 - p.u0), rv = ((q.v1 - q.v0) / h) * h0 / Math.max(1, p.v1 - p.v0);
+        if (ru < 0.5 || ru > 1.6 || rv < 0.5 || rv > 1.6) continue;
+        const pu = (x0, x) => ((x - C.u0) / w) * w0 - (x0 - C0.u0), pv = (y0, y) => ((y - C.v0) / h) * h0 - (y0 - C0.v0);
+        // only the edges between two tiles of this face: past the outer edge, the gold of the next
+        // face shows up when the face turns and joins the tile
+        const [r, c] = GRID[nm];
+        if (c > 0) obs.push([nm, 0, 0, pu(p.u0, q.u0), v.a]);
+        if (c < 2) obs.push([nm, 0, 1, pu(p.u1, q.u1), v.a]);
+        if (r > 0) obs.push([nm, 1, 0, pv(p.v0, q.v0), v.b]);
+        if (r < 2) obs.push([nm, 1, 1, pv(p.v1, q.v1), v.b]);
+        k++;
+      }
+      if (k) nv++;
+    }
+    if (nv < (opt.minViews || 6)) return null;
+    let z = {};
+    for (const nm of names) z[nm] = 0;
+    const neighbour = (nm, axis, side) => { const [r, c] = GRID[nm]; const rr = axis === 1 ? r + (side ? 1 : -1) : r, cc = axis === 0 ? c + (side ? 1 : -1) : c; return AT[rr + "," + cc] || null; };
+    let wts = obs.map(() => 1);
+    for (let it = 0; it < 6; it++) {
+      const num = {}, den = {};
+      obs.forEach((o, i) => {
+        let w = wts[i];
+        if (it > 0) {
+          // covered by a higher neighbour moving towards this edge
+          const nb = neighbour(o[0], o[1], o[2]);
+          const zn = nb === "C" ? 0 : nb ? z[nb] : null;
+          if (zn != null && zn > z[o[0]] + 2 / toPct && (o[2] === 0 ? o[4] > 0 : o[4] < 0)) w = 0;
+        }
+        num[o[0]] = (num[o[0]] || 0) + w * o[4] * o[3];
+        den[o[0]] = (den[o[0]] || 0) + w * o[4] * o[4];
+      });
+      for (const nm of names) z[nm] = den[nm] > 1e-9 ? num[nm] / den[nm] : 0;
+      // robust weights
+      const r = obs.map((o) => Math.abs(o[3] - z[o[0]] * o[4]));
+      const s = r.slice().sort((x, y) => x - y)[Math.floor(r.length / 2)] * 1.5 + 0.3;
+      wts = r.map((x) => (x <= 2 * s ? 1 : (2 * s) / x));
+    }
+    let rs = 0, nn = 0;
+    obs.forEach((o) => { rs += (o[3] - z[o[0]] * o[4]) ** 2; nn++; });
+    const out = {};
+    for (const nm of names) out[nm] = +(z[nm] * toPct).toFixed(2);
+    return { z: out, n: nv, fit: +(Math.sqrt(rs / nn) * toPct).toFixed(2) };
+  }
+  // Turn of a view from the phone's orientation (deviceorientation alpha, beta, gamma in degrees)
+  // against the orientation at the frontal view, in the grid frame of the view (angle th):
+  // { a, b } = tan of the turn towards u and v (where the face looks), the cube held still.
+  function turnFromOrientation(o0, o1, th) {
+    const R = (o) => {
+      const [a, b, g] = [o[0], o[1], o[2]].map((x) => (x * Math.PI) / 180);
+      const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
+      return [[ca * cg - sa * sb * sg, -sa * cb, ca * sg + sa * sb * cg], [sa * cg + ca * sb * sg, ca * cb, sa * sg - ca * sb * cg], [-cb * sg, sb, cb * cg]];
+    };
+    const R0 = R(o0), R1 = R(o1);
+    // normal of the face in the frame of the device now: R1^T R0 (0,0,1); camera frame: y and z flipped
+    const e = [R0[0][2], R0[1][2], R0[2][2]];
+    const d = [R1[0][0] * e[0] + R1[1][0] * e[1] + R1[2][0] * e[2], R1[0][1] * e[0] + R1[1][1] * e[1] + R1[2][1] * e[2], R1[0][2] * e[0] + R1[1][2] * e[1] + R1[2][2] * e[2]];
+    const nx = d[0], ny = -d[1], nz = -d[2];
+    if (nz > -0.3) return null;
+    const a = nx / -nz, b = ny / -nz, c = Math.cos(th || 0), s = Math.sin(th || 0);
+    return { a: a * c + b * s, b: -a * s + b * c, deg: (Math.atan(Math.hypot(a, b)) * 180) / Math.PI };
+  }
+
   function toImage(res, up, vp) {
     const u = up + res.uMin, v = vp + res.vMin;
     return [u * res.cs - v * res.sn, u * res.sn + v * res.cs];
@@ -4030,7 +4135,7 @@ const MirrorVision = (() => {
     });
   }
 
-  return { photoFrame, frameFace, turnFrame, viewEntry, followTurn, analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, sameFaceStrict, placeFace, solvedModel, nameSolved, rotateReading, sameFace, ROTS, TARGET, STICKERS };
+  return { orbitHeightsGyro, turnFromOrientation, photoFrame, frameFace, turnFrame, viewEntry, followTurn, analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, sameFaceStrict, placeFace, solvedModel, nameSolved, rotateReading, sameFace, ROTS, TARGET, STICKERS };
 })();
 
 if (typeof module !== "undefined") module.exports = MirrorVision;
@@ -4581,6 +4686,82 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   // cube was named only from its measures and often got a wrong name (real scan of 29
   // September: the cube turned to the right, the new face taken for «Sopra»).
   const trk = { anchor: null, seq: [], front: [] };
+  // ---------- phone orientation (motion sensors), for the heights of the tiles ----------
+  // During the turn round a face the phone moves and the cube stays still: the orientation of the
+  // phone says exactly where the face looks in every view and by how much (sign and size of the
+  // parallax, which the picture alone gets wrong on a scrambled cube). iPhone: permission is asked
+  // inside the tap that starts the live scan.
+  const ori = { on: false, asked: false, buf: [], log: [] };
+  function askOrientation() {
+    if (ori.asked) return;
+    ori.asked = true;
+    const start = () => { if (!ori.on) { ori.on = true; window.addEventListener("deviceorientation", onOrientation); } };
+    try {
+      if (typeof DeviceOrientationEvent === "undefined") return;
+      if (typeof DeviceOrientationEvent.requestPermission === "function") DeviceOrientationEvent.requestPermission().then((r) => { if (r === "granted") start(); }).catch(() => {});
+      else start();
+    } catch (e) { /* no motion sensors: the old side views */ }
+  }
+  function onOrientation(e) {
+    if (e.alpha == null || e.beta == null || e.gamma == null) return;
+    const t = performance.now();
+    ori.buf.push({ t, o: [e.alpha, e.beta, e.gamma] });
+    if (ori.buf.length > 300) ori.buf.shift();
+    if (live.rec && live.recT0 != null) {
+      const tr = Math.round(t - live.recT0), last = ori.log[ori.log.length - 1];
+      if (!last || tr - last[0] >= 30) ori.log.push([tr, +e.alpha.toFixed(2), +e.beta.toFixed(2), +e.gamma.toFixed(2)]);
+    }
+  }
+  function orientationAt(t) {
+    let best = null;
+    for (let i = ori.buf.length - 1; i >= 0; i--) { const q = ori.buf[i]; if (!best || Math.abs(q.t - t) < Math.abs(best.t - t)) best = q; if (q.t < t - 300) break; }
+    return best && Math.abs(best.t - t) < 150 ? best.o : null;
+  }
+  const ringSector = (tf) => Math.floor(((Math.atan2(-tf.b, -tf.a) + 2 * Math.PI + Math.PI / 8) % (2 * Math.PI)) / (Math.PI / 4)) % 8;
+  // full enough: five sides out of eight seen twice, or plenty of views from at least four sides
+  const ringFull = (px) => !!px.ring && (px.ring.filter((n) => n >= 2).length >= 5 || (px.orbit.length >= 14 && px.ring.filter((n) => n >= 1).length >= 4));
+  // With the motion sensors: views all round the face (the ring on the screen), then the height of
+  // every tile from their parallax.
+  function collectOrbit(slot, px, res, now) {
+    const tf = MirrorVision.turnFromOrientation(px.front.ori, res.ori, res.theta || 0);
+    if (window.__dbgOrbit) window.__dbgOrbit.push({ t: Math.round(now), f: px.front.ori, o: res.ori, tf, n: px.orbit ? px.orbit.length : 0, ring: px.ring ? px.ring.join("") : "" });
+    if (!tf) return;
+    px.orbit = px.orbit || []; px.ring = px.ring || new Array(8).fill(0);
+    if (tf.deg >= 6 && tf.deg <= 30 && px.orbit.length < 60 && now - (px.lastO || 0) >= 80) {
+      px.orbit.push({ edges: res.edges, a: tf.a, b: tf.b });
+      px.ring[ringSector(tf)]++;
+      px.lastO = now;
+    }
+    live.ringFor = { slot, t: now };
+    if (!px.orbitDone && ringFull(px)) {
+      px.orbitDone = true;
+      const h = MirrorVision.orbitHeightsGyro(px.front, px.orbit);
+      if (h) st.slots[slot].res.orbit = h;
+      beep(); renderScan();
+      const more = nextOpen(-1) >= 0;
+      toast(`«${SLOTS[slot].name}» completa`);
+      if (live.depthFor && live.depthFor.slot === slot) { live.depthFor = null; if (more) live.tip = `«${SLOTS[slot].name}» completa. ${cap(guideTip(nextOpen(slot)))}`; }
+    }
+    maybeCheck(now);
+  }
+  // The ring round the face while its heights are being measured: a sector fills when the phone
+  // has looked at the face from that side.
+  function drawRing(r, map, scale) {
+    const R = live.ringFor, df = live.depthFor;
+    if (!df || !R || R.slot !== df.slot || performance.now() - R.t > 800 || !r || !r.g) return;
+    const px = st.slots[df.slot].res && st.slots[df.slot].res.plx;
+    if (!px || !px.ring) return;
+    const q = MirrorVision.toImage(r, 0.5 * (r.g[0] + r.g[1]), 0.5 * (r.h[0] + r.h[1]));
+    const [x, y] = map(q[0], q[1]);
+    const rad = 1.8 * (r.m || 40) * scale;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(r.theta || 0); ctx.lineCap = "round"; ctx.lineWidth = Math.max(5 * dpr, 0.1 * rad);
+    for (let k = 0; k < 8; k++) {
+      const n = px.ring[k];
+      ctx.strokeStyle = n >= 2 ? "rgba(52,199,89,.95)" : n === 1 ? "rgba(52,199,89,.5)" : "rgba(255,255,255,.4)";
+      ctx.beginPath(); ctx.arc(0, 0, rad, (k - 0.5) * (Math.PI / 4) + 0.07, (k + 0.5) * (Math.PI / 4) - 0.07); ctx.stroke();
+    }
+    ctx.restore();
+  }
   const TRK_MAX_MS = 15000;
   const MOVE_TXT = { left: "girato il cubo verso sinistra", right: "girato il cubo verso destra", down: "inclinato il cubo verso di te", up: "inclinato il cubo lontano da te" };
   function moveText(steps) {
@@ -5094,6 +5275,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (!live.on || !job || (!live.check && st.cur < 0)) return;
     const now = performance.now(), v = live.video;
     res.job = job;
+    res.ori = ori.on ? orientationAt(job.t) : null;
     if (live.check) { handleCheck(res, now); return; }
     trkAdd(res, job, now);
     // the depth of a face that does not come (reflections, a hand in the way) is measured later
@@ -5145,7 +5327,13 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const sq = Math.abs((res.g[1] - res.g[0]) - (res.h[1] - res.h[0])) / res.m;
       const fl = Object.values(res.edges || {}).map((b) => b.n / Math.max(1, (b.u1 - b.u0 + 1) * (b.v1 - b.v0 + 1))).sort((a, b) => a - b);
       const oblique = fl.length < 5 || fl[fl.length >> 1] < 0.8 || fl[0] < 0.7;
-      if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12 || oblique) { tilted = true; collectTurned(res, now); msg = live.depthFor ? "così, inclinalo anche nelle altre direzioni: in su, in giù, a destra e a sinistra" : "continua a ruotare piano"; bad = true; }
+      // With the motion sensors the turn is known: while a face is being measured, a view turned
+      // from its frontal pose is a side view whatever the picture says (on a scrambled face the
+      // picture often misses the turn, and the view went to the vote as a new face)
+      const dfx = live.depthFor && st.slots[live.depthFor.slot].res && st.slots[live.depthFor.slot].res.plx;
+      const gt = dfx && dfx.front && dfx.front.ori && res.ori ? MirrorVision.turnFromOrientation(dfx.front.ori, res.ori, res.theta || 0) : null;
+      if (gt && gt.deg >= 6 && gt.deg <= 35) { tilted = true; collectTurned(res, now); msg = "così: continua il giro attorno alla faccia"; bad = true; }
+      else if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12 || oblique) { tilted = true; collectTurned(res, now); msg = live.depthFor ? (ori.on && res.ori ? "così: continua il giro attorno alla faccia" : "così, inclinalo anche nelle altre direzioni: in su, in giù, a destra e a sinistra") : "continua a ruotare piano"; bad = true; }
     }
     // 2) after a confirmation, wait until the cube has really been turned
     if (live.waitTurn && whole) {
@@ -5343,7 +5531,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const good = !live.turnPh && r.ok && live.cand && live.cand.reads.includes(r);
       if (!live.turnPh) drawReading(r, map, !good);
       if (good) { drawMissing(r, map, live.cand.cov && live.cand.cov.missing); drawProgress(r, map, live.cand.frac || 0); }
-      if (!live.check) drawFaceLabel(r, map, s / j.k);
+      if (!live.check) { drawRing(r, map, s / j.k); drawFaceLabel(r, map, s / j.k); }
     } else if (!live.check) drawFaceLabel(null);
     if (!live.check) drawMiniMap();
     const tip = $("#liveTip");
@@ -5429,7 +5617,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     beep(); flash();
     const fr = c.reads.filter((r) => !r.aligned && r.edges && r.edges.C).sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
     renderScan();
-    st.slots[slot].res.plx = { front: fr ? { res: { g: fr.g, h: fr.h }, edges: fr.edges } : null, turned: [] };
+    st.slots[slot].res.plx = { front: fr ? { res: { g: fr.g, h: fr.h }, edges: fr.edges, ori: fr.ori || null } : null, turned: [] };
     if (st.flagged) st.flagged.delete(slot);
     live.lastFace = { slot, t: performance.now() };
     const nDone = st.slots.filter((x) => x.res && x.res.ok).length;
@@ -5442,12 +5630,17 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (live.last && live.last.job) trkAnchor(slot, live.last, live.last.job, performance.now());
     live.depthFor = st.calib ? null : { slot, t0: performance.now() };
     advanceLive(slot);
-    if (live.depthFor) live.tip = `Ora inclina un po' il cubo, in su, in giù, a destra e a sinistra: misuro la profondità di «${SLOTS[slot].name}»`;
+    if (live.depthFor) live.tip = ori.on && fr && fr.ori ? `Ora tieni fermo il cubo e muovi piano il telefono attorno a «${SLOTS[slot].name}»: riempi l'anello`
+      : `Ora inclina un po' il cubo, in su, in giù, a destra e a sinistra: misuro la profondità di «${SLOTS[slot].name}»`;
     return slot;
   }
   // Turned views of the face that was just in front of the camera: they give the parallax.
   function collectTurned(res, now) {
     const lf = live.lastFace;
+    // with the motion sensors: the face in view is the one the views move on from without a jump
+    const inView = live.depthFor ? live.depthFor.slot : twin.inView ? twin.inView.slot : lf && now - lf.t <= 2500 ? lf.slot : -1;
+    const pxi = inView >= 0 && st.slots[inView].res && st.slots[inView].res.plx;
+    if (pxi && pxi.front && pxi.front.ori && res.ori && res.g && res.edges && res.edges.C) { collectOrbit(inView, pxi, res, now); return; }
     if (!lf || now - lf.t > 2500 || !res.g || !res.edges || !res.edges.C) return;
     const sl = st.slots[lf.slot], px = sl.res && sl.res.plx;
     if (!px || !px.front || px.turned.length >= 8 || now - (px.lastT || 0) < 200) return;
@@ -5476,7 +5669,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   function maybeCheck(now) {
     if (nextOpen(-1) >= 0) return;
     if (st.calib) { finishCalibration(); return; }
-    const ready = st.slots.every((x) => x.res && x.res.plx && (x.res.plx.turned.length >= 2 || !x.res.plx.front));
+    const ready = st.slots.every((x) => x.res && x.res.plx && (x.res.plx.orbitDone || x.res.plx.turned.length >= 2 || !x.res.plx.front));
     st.allSince = st.allSince || now;
     if ((ready || now - st.allSince > 15000) && !(st.flagged && st.flagged.size)) liveCheck();
   }
@@ -6089,7 +6282,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
         document.querySelectorAll("[data-act='sharevideo']").forEach((b) => { b.hidden = false; });
       };
       r.start(1000);
-      live.rec = r;
+      live.rec = r; live.recT0 = performance.now(); ori.log = [];
     } catch (e) { live.rec = null; }
   }
   function stopRecording() { try { if (live.rec && live.rec.state !== "inactive") live.rec.stop(); } catch (e) { /* ignore */ } }
@@ -6098,11 +6291,14 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (!b) { toast("Nessuna registrazione: fai prima una scansione dal vivo"); return; }
     const ext = b.type.includes("mp4") ? "mp4" : "webm";
     const file = new File([b], `scansione-cubo.${ext}`, { type: b.type });
+    // the phone's orientation during the recording, to replay the scan exactly
+    const sens = ori.log.length ? new File([JSON.stringify({ v: 1, samples: ori.log })], "scansione-cubo-sensori.json", { type: "application/json" }) : null;
+    const files = sens ? [file, sens] : [file];
     try {
-      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Scansione del cubo" }); return; }
+      if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files, title: "Scansione del cubo" }); return; }
+      if (sens && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Scansione del cubo" }); }
     } catch (e) { if (e && e.name === "AbortError") return; }
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(b); a.download = file.name; document.body.append(a); a.click(); a.remove();
+    for (const f of files) { const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name; document.body.append(a); a.click(); a.remove(); }
   }
 
   // ---------- recalibration with the solved cube ----------
@@ -6292,7 +6488,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     else if (act === "rescan") newScan();
     else if (act === "back") backToScan(st.slots.findIndex((x) => x.warn) >= 0 ? st.slots.findIndex((x) => x.warn) : 0);
     else if (act === "video") vidIn.click();
-    else if (act === "live") startLive();
+    else if (act === "live") { askOrientation(); startLive(); }
     else if (act === "export") exportScan();
     else if (act === "sharevideo") shareVideo();
     else if (act === "calib") { newScan(); st.calib = true; startLive(); toast("Ricalibrazione: mostrami le sei facce del cubo RISOLTO"); }
