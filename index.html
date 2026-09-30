@@ -4587,7 +4587,94 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (steps.length === 2 && steps[0] === steps[1]) return steps[0] === "left" || steps[0] === "right" ? "girato il cubo di mezzo giro" : "capovolto il cubo";
     return steps.map((d, i) => (i ? MOVE_TXT[d].replace("il cubo ", "") : MOVE_TXT[d])).join(" e poi ");
   }
-  function trkReset() { trk.anchor = null; trk.seq = []; trk.front = []; }
+  function trkReset() {
+    trk.anchor = null; trk.seq = []; trk.front = []; live.guess = null;
+    Object.assign(twin, { inView: null, chain: null, frame: null, pred: null, tilt: [0, 0] });
+  }
+  // ---------- the cube in front of the camera: twin model and face label ----------
+  // The face in view (its box) while the views move on smoothly from its frontal view, the frame
+  // of that face in the cube, and how it is tilted. The small 3D model turns the same way, and
+  // the name of the face is drawn on the face itself.
+  const twin = { inView: null, chain: null, frame: null, pred: null, tilt: [0, 0] };
+  function twinSet(slot, q, e, now) {
+    Object.assign(twin, { inView: { slot, t: now }, chain: e, pred: null, tilt: [0, 0], frame: MirrorVision.photoFrame(SLOTS[slot].face, q) });
+  }
+  const twinNear = (a, b) => b.t - a.t <= 350 && Math.hypot(a.cx - b.cx, a.cy - b.cy) <= 0.3 * Math.max(a.s, b.s) && b.s / a.s > 0.8 && b.s / a.s < 1.25;
+  function twinFollow(e) {
+    if (!twin.chain) return;
+    const ok = e.s > 0 && e.asp > 0 && (e.span == null || e.span >= 2.3) && (e.cells == null || e.cells >= 6);
+    if (!ok) { if (e.t - twin.chain.t > 350) twinLost(); return; }
+    if (!twinNear(twin.chain, e)) { twinLost(); return; }
+    twin.chain = e;
+    if (twin.inView) twin.inView.t = e.t;
+    // tilt of the face in front: angle from how short the grid is, side from the sizes
+    const med = (l) => { const b = l.filter((x) => typeof x === "number").sort((p, q) => p - q); return b.length ? b[b.length >> 1] : 0; };
+    const bx = med(trk.front.map((f) => f.x)), by = med(trk.front.map((f) => f.y));
+    let ax = 0, ay = 0;
+    if (e.asp < 0.97 && typeof e.x === "number" && Math.abs(e.x - bx) >= 0.008) ax = Math.sign(e.x - bx) * Math.acos(Math.max(0.5, e.asp));
+    if (e.asp > 1.03 && typeof e.y === "number" && Math.abs(e.y - by) >= 0.008) ay = Math.sign(e.y - by) * Math.acos(Math.max(0.5, 1 / e.asp));
+    twin.tilt = [ax, ay];
+  }
+  // Another face came in front (a jump in the picture): if the cube was turning, the model goes
+  // on turning that way until the new face is recognised (then it settles exactly).
+  function twinLost() {
+    const [ax, ay] = twin.tilt;
+    if (twin.frame && Math.max(Math.abs(ax), Math.abs(ay)) >= 0.2) {
+      const d = Math.abs(ax) >= Math.abs(ay) ? (ax > 0 ? "right" : "left") : (ay > 0 ? "down" : "up");
+      twin.pred = MirrorVision.turnFrame(twin.frame, d);
+    }
+    twin.inView = null; twin.chain = null; twin.tilt = [0, 0];
+  }
+  // Orientation of the small model: the face in front towards you as on the real cube, tilted
+  // as it is, seen a little from above and from the right so that it still looks 3D.
+  function twinTarget(T) {
+    const fr = twin.pred || twin.frame;
+    if (!fr) return null;
+    const qM = new T.Quaternion().setFromRotationMatrix(new T.Matrix4().set(fr.r[0], fr.r[1], fr.r[2], 0, fr.u[0], fr.u[1], fr.u[2], 0, fr.n[0], fr.n[1], fr.n[2], 0, 0, 0, 0, 1));
+    const tl = twin.inView && !twin.pred ? twin.tilt : [0, 0];
+    const qT = new T.Quaternion().setFromEuler(new T.Euler(tl[1], tl[0], 0));
+    return new T.Quaternion().setFromEuler(new T.Euler(0.38, -0.5, 0)).multiply(qT).multiply(qM);
+  }
+  // The name of the face in front: white when sure, yellow with "?" when provisional or only
+  // suggested by the movement, red when the face must be read again.
+  function faceLabel(r) {
+    const iv = twin.inView;
+    if (iv && st.slots[iv.slot] && st.slots[iv.slot].res) {
+      const sl = st.slots[iv.slot];
+      return { text: SLOTS[iv.slot].name + (sl.guess ? "?" : ""), col: st.flagged && st.flagged.has(iv.slot) ? BAD : sl.guess ? "#F2C94C" : "#FFFFFF" };
+    }
+    // a new face only once it is in front and being read (not the grids of a turn)
+    if (live.cand && live.cand.reads && live.cand.reads.includes(r)) {
+      const g = live.guess && performance.now() - live.guess.t < 1500 && !st.slots[live.guess.slot].res ? live.guess : null;
+      return g ? { text: SLOTS[g.slot].name + "?", col: "#F2C94C" } : { text: "Faccia nuova", col: "#FFFFFF" };
+    }
+    return null;
+  }
+  const lab = { x: 0, y: 0, a: 0, size: 0, alpha: 0, text: "", col: "" };
+  function drawFaceLabel(r, map, scale) {
+    const L = r ? faceLabel(r) : null;
+    if (L && r && r.g && r.h) {
+      const q = MirrorVision.toImage(r, 0.5 * (r.g[0] + r.g[1]), 0.5 * (r.h[0] + r.h[1]));
+      const [x, y] = map(q[0], q[1]);
+      const size = Math.max(12 * dpr, Math.min(24 * dpr, 0.3 * (r.m || 40) * scale));
+      const k = lab.alpha > 0.05 ? 0.35 : 1;          // follows the face softly
+      lab.x += (x - lab.x) * k; lab.y += (y - lab.y) * k; lab.a += ((r.theta || 0) - lab.a) * k; lab.size += (size - lab.size) * k;
+      lab.text = L.text; lab.col = L.col; lab.alpha = Math.min(1, lab.alpha + 0.25);
+    } else lab.alpha = Math.max(0, lab.alpha - 0.08);
+    if (lab.alpha <= 0.02 || !lab.text) return;
+    ctx.save();
+    ctx.globalAlpha = lab.alpha;
+    ctx.translate(lab.x, lab.y); ctx.rotate(lab.a);
+    ctx.font = `600 ${Math.round(lab.size)}px -apple-system, system-ui, sans-serif`;
+    const w = ctx.measureText(lab.text).width, hh = lab.size * 1.55, pad = lab.size * 0.6, x0 = -w / 2 - pad, y0 = -hh / 2, ww = w + 2 * pad, rr = hh / 2;
+    ctx.beginPath();
+    ctx.moveTo(x0 + rr, y0); ctx.lineTo(x0 + ww - rr, y0); ctx.arc(x0 + ww - rr, y0 + rr, rr, -Math.PI / 2, Math.PI / 2);
+    ctx.lineTo(x0 + rr, y0 + hh); ctx.arc(x0 + rr, y0 + rr, rr, Math.PI / 2, 1.5 * Math.PI); ctx.closePath();
+    ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fill();
+    ctx.fillStyle = lab.col; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(lab.text, 0, lab.size * 0.06);
+    ctx.restore();
+  }
   function trkEntry(res, job, now) {
     if (!res || !res.g || !res.h || !job || !job.roi) return { t: now, s: 0, asp: 0 };
     const q = MirrorVision.toImage(res, 0.5 * (res.g[0] + res.g[1]), 0.5 * (res.h[0] + res.h[1]));
@@ -4598,7 +4685,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
   function trkAdd(res, job, now) {
     if (!trk.anchor) return;
-    trk.seq.push(trkEntry(res, job, now));
+    const e = trkEntry(res, job, now);
+    trk.seq.push(e);
+    twinFollow(e);
     if (trk.seq.length > 600) trkReset();              // wandering for too long: the chain is lost
   }
   // The quarter turns that bring reading b onto reading a: alignTo when the measures agree
@@ -4628,6 +4717,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (trk.front.length > 8) trk.front.shift();
     trk.anchor = { slot, q: (k + (sl.turn || 0)) % 4, t: now };
     trk.seq = [e];
+    twinSet(slot, trk.anchor.q, e, now);
   }
   // Test harness only (window.__trkChecks): a face seen before comes back in front, so its box
   // and turn are known from the measures; what would the movement have said?
@@ -5025,6 +5115,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       }
       const reads = group.map((x) => x.res);
       const c = live.cand = { reads, merged: mergeReadings(reads), cov: coverage(reads), t0: group.length ? Math.min(...group.map((x) => x.t)) : now };
+      // for the label: which face the movement suggests (both faces agree), at most every 0.4 s
+      if (trk.anchor && (!live.guess || now - live.guess.t > 400)) {
+        const pg = trkPredict(c, c.merged);
+        live.guess = pg && pg.conf >= 2 && !st.slots[pg.slot].res ? { slot: pg.slot, t: now } : null;
+      }
       const span = group.length ? group[group.length - 1].t - group[0].t : 0;
       c.frac = Math.min(reads.length / WINDOW_READS, span / WINDOW_MS, c.cov.full / MEAS.length);
       if (c.frac >= 1 && consistent(reads)) {
@@ -5173,7 +5268,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const good = !live.turnPh && r.ok && live.cand && live.cand.reads.includes(r);
       if (!live.turnPh) drawReading(r, map, !good);
       if (good) { drawMissing(r, map, live.cand.cov && live.cand.cov.missing); drawProgress(r, map, live.cand.frac || 0); }
-    }
+      if (!live.check) drawFaceLabel(r, map, s / j.k);
+    } else if (!live.check) drawFaceLabel(null);
     if (!live.check) drawMiniMap();
     const tip = $("#liveTip");
     if (tip.textContent !== live.tip) tip.textContent = live.tip;
@@ -5246,7 +5342,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const guess = (!!final.__guess || src === "track") && !(st.flagged && st.flagged.has(slot));
     delete final.aligned; delete final.__guess; delete final.__src; delete final.__why;
     Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false, guess, src, pred: tp ? { slot: tp.slot, turn: tp.turn, steps: tp.steps, conf: tp.conf } : null, why, t: performance.now(), turn: final.__rot || 0, frameRes: MirrorVision.rotateReading(final, final.__rot || 0) });
-    live.cand = null;
+    live.cand = null; live.guess = null;
     beep(); flash();
     const fr = c.reads.filter((r) => !r.aligned && r.edges && r.edges.C).sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
     renderScan();
@@ -5593,11 +5689,20 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       c.addEventListener("pointerdown", (e) => { m3.drag = { x: e.clientX, y: e.clientY }; c.setPointerCapture(e.pointerId); });
       c.addEventListener("pointermove", (e) => { if (!m3.drag) return; m3.ry += (e.clientX - m3.drag.x) * 0.012; m3.rx = Math.max(-1.4, Math.min(1.4, m3.rx + (e.clientY - m3.drag.y) * 0.012)); m3.drag = { x: e.clientX, y: e.clientY }; m3.idle = performance.now(); });
       c.addEventListener("pointerup", () => { m3.drag = null; m3.idle = performance.now(); });
+      m3.q = new T.Quaternion().setFromEuler(new T.Euler(m3.rx, m3.ry, 0));
+      m3.rz = 0;
       const tick = () => {
         m3.raf = requestAnimationFrame(tick);
         if (!m3.group || document.hidden || st.phase !== "scan") return;
-        if (!m3.drag && performance.now() - m3.idle > 2500) m3.ry += 0.006;
-        m3.group.rotation.set(m3.rx, m3.ry, 0);
+        // live scan: the model turns like the real cube (not while it is dragged, and for 3 s after)
+        const tq = live.on && !live.check && !m3.drag && performance.now() - m3.idle > 3000 ? twinTarget(T) : null;
+        if (tq) { m3.q.slerp(tq, 0.12); m3.follow = true; }
+        else {
+          if (m3.follow) { const eu = new T.Euler().setFromQuaternion(m3.q, "XYZ"); m3.rx = eu.x; m3.ry = eu.y; m3.rz = eu.z; m3.follow = false; }
+          if (!m3.drag && performance.now() - m3.idle > 2500) m3.ry += 0.006;
+          m3.q.setFromEuler(new T.Euler(m3.rx, m3.ry, m3.rz));
+        }
+        m3.group.quaternion.copy(m3.q);
         m3.renderer.render(m3.scene, m3.cam);
       };
       tick();
