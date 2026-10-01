@@ -3990,6 +3990,89 @@ const MirrorVision = (() => {
     }
   }
 
+  // ---------- relief of one face from its turned views (picture only) ----------
+  // Positions measured from the centre tile and scaled by its size along each axis in every view;
+  // what is left is the parallax, height * turn (rank one, alternating least squares): heights z
+  // and turns A of every view, up to one common sign. The sign comes from what the tiles hide:
+  // a higher tile covers the edge of a lower neighbour when it moves towards it, so that edge
+  // follows the neighbour's height in those views. Of the two signs, the one whose covered edges
+  // explain the readings better wins; then the heights are measured again without those edges.
+  // Returns { z: {TL: ...} (> 0 nearer to the camera, units of the frontal picture), sure, n, views }.
+  function reliefFromViews(front, views) {
+    const e0 = front && front.edges;
+    if (!e0 || !e0.C) return null;
+    const C0 = e0.C, w0 = C0.u1 - C0.u0, h0 = C0.v1 - C0.v0;
+    const GRID = { TL: [0, 0], T: [0, 1], TR: [0, 2], L: [1, 0], C: [1, 1], R: [1, 2], BL: [2, 0], B: [2, 1], BR: [2, 2] };
+    const AT = {}; for (const nm in GRID) AT[GRID[nm].join(",")] = nm;
+    const names = Object.keys(e0).filter((nm) => nm !== "C" && GRID[nm]);
+    const nb = (nm, ax, sd) => { const [r, c] = GRID[nm]; return AT[(ax === 1 ? r + (sd ? 1 : -1) : r) + "," + (ax === 0 ? c + (sd ? 1 : -1) : c)] || null; };
+    const V = [];
+    for (const v of views) {
+      const e = v.edges;
+      if (!e || !e.C) continue;
+      const C = e.C, w = C.u1 - C.u0, h = C.v1 - C.v0;
+      if (!(w > 0.55 * w0 && h > 0.55 * h0 && w < 1.8 * w0 && h < 1.8 * h0)) continue;
+      const obs = [];
+      for (const nm of names) {
+        const p = e0[nm], q = e[nm];
+        if (!q) continue;
+        const ru = ((q.u1 - q.u0) / w) * w0 / Math.max(1, p.u1 - p.u0), rv = ((q.v1 - q.v0) / h) * h0 / Math.max(1, p.v1 - p.v0);
+        if (ru < 0.5 || ru > 1.6 || rv < 0.5 || rv > 1.6) continue;
+        const pu = (x0, x) => ((x - C.u0) / w) * w0 - (x0 - C0.u0), pv = (y0, y) => ((y - C.v0) / h) * h0 - (y0 - C0.v0);
+        const [r, c] = GRID[nm];
+        if (c > 0) obs.push([nm, 0, 0, pu(p.u0, q.u0)]);
+        if (c < 2) obs.push([nm, 0, 1, pu(p.u1, q.u1)]);
+        if (r > 0) obs.push([nm, 1, 0, pv(p.v0, q.v0)]);
+        if (r < 2) obs.push([nm, 1, 1, pv(p.v1, q.v1)]);
+      }
+      if (obs.length >= 8) V.push({ obs });
+    }
+    if (V.length < 4) return null;
+    const zOf = (nm, z) => (nm === "C" ? 0 : z[nm] || 0);
+    // alternating least squares; skip(o, i, z, A) leaves out covered edges
+    const fit = (skip, z0) => {
+      let z = Object.assign({}, z0), A = V.map(() => [0, 0]);
+      for (let it = 0; it < 30; it++) {
+        A = V.map((v, i) => { const num = [0, 0], den = [0, 0]; for (const o of v.obs) { if (skip && skip(o, i, z, A)) continue; const zz = zOf(o[0], z); num[o[1]] += zz * o[3]; den[o[1]] += zz * zz; } return [den[0] > 1e-9 ? num[0] / den[0] : 0, den[1] > 1e-9 ? num[1] / den[1] : 0]; });
+        const num = {}, den = {};
+        V.forEach((v, i) => v.obs.forEach((o) => { if (skip && skip(o, i, z, A)) return; const a = A[i][o[1]]; num[o[0]] = (num[o[0]] || 0) + a * o[3]; den[o[0]] = (den[o[0]] || 0) + a * a; }));
+        const nz = {}; for (const nm of names) nz[nm] = den[nm] > 1e-12 ? num[nm] / den[nm] : 0;
+        // keep the size of z fixed (the factor between z and A is free)
+        const s0 = Math.sqrt(names.reduce((s, nm) => s + zOf(nm, z) ** 2, 0)) || 1, s1 = Math.sqrt(names.reduce((s, nm) => s + nz[nm] ** 2, 0)) || 1;
+        for (const nm of names) z[nm] = (nz[nm] / s1) * s0;
+      }
+      return { z, A };
+    };
+    // start from the view with the strongest parallax
+    const best = V.reduce((b, v) => { const s = v.obs.reduce((a, o) => a + o[3] * o[3], 0); return !b || s > b.s ? { v, s } : b; }, null).v;
+    const z0 = {}; for (const nm of names) z0[nm] = 0;
+    for (const o of best.obs) z0[o[0]] += o[3];
+    const plain = fit(null, z0);
+    // which sign: covered edges follow the neighbour, the others their own tile
+    const covered = (o, i, z, A, sg) => {
+      const n = nb(o[0], o[1], o[2]);
+      if (!n) return false;
+      const zt = sg * zOf(o[0], z), zn = sg * zOf(n, z), a = sg * A[i][o[1]];
+      const big = 0.06 * Math.max(...names.map((nm) => Math.abs(zOf(nm, z)))) + 1e-9;
+      return zn > zt + big && (o[2] === 0 ? a > 0 : a < 0);
+    };
+    const cost = (sg) => {
+      let c = 0;
+      V.forEach((v, i) => v.obs.forEach((o) => {
+        const n = nb(o[0], o[1], o[2]);
+        const model = covered(o, i, plain.z, plain.A, sg) ? zOf(n, plain.z) * plain.A[i][o[1]] : zOf(o[0], plain.z) * plain.A[i][o[1]];
+        c += Math.min(400, (o[3] - model) ** 2);
+      }));
+      return c;
+    };
+    const cp = cost(1), cm = cost(-1), sg = cp <= cm ? 1 : -1;
+    const sure = Math.abs(cp - cm) / Math.max(1e-9, Math.min(cp, cm)) > 0.08;
+    // heights again, leaving out the covered edges (with the sign found)
+    const again = fit((o, i, z, A) => covered(o, i, z, A, 1), Object.fromEntries(names.map((nm) => [nm, sg * plain.z[nm]])));
+    // the turns found with the heights: sign as the heights
+    return { z: again.z, A: again.A, sure, n: V.length, margin: +(Math.abs(cp - cm) / Math.max(1e-9, Math.min(cp, cm))).toFixed(3) };
+  }
+
   function toImage(res, up, vp) {
     const u = up + res.uMin, v = vp + res.vMin;
     return [u * res.cs - v * res.sn, u * res.sn + v * res.cs];
@@ -4030,7 +4113,7 @@ const MirrorVision = (() => {
     });
   }
 
-  return { photoFrame, frameFace, turnFrame, viewEntry, followTurn, analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, sameFaceStrict, placeFace, solvedModel, nameSolved, rotateReading, sameFace, ROTS, TARGET, STICKERS };
+  return { reliefFromViews, photoFrame, frameFace, turnFrame, viewEntry, followTurn, analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, sameFaceStrict, placeFace, solvedModel, nameSolved, rotateReading, sameFace, ROTS, TARGET, STICKERS };
 })();
 
 if (typeof module !== "undefined") module.exports = MirrorVision;
@@ -4583,7 +4666,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   const trk = { anchor: null, seq: [], front: [] };
   const TRK_MAX_MS = 15000;
   const MOVE_TXT = { left: "girato il cubo verso sinistra", right: "girato il cubo verso destra", down: "inclinato il cubo verso di te", up: "inclinato il cubo lontano da te" };
-  function moveText(steps) {
+  function turnText(steps) {
     if (steps.length === 1) return MOVE_TXT[steps[0]];
     if (steps.length === 2 && steps[0] === steps[1]) return steps[0] === "left" || steps[0] === "right" ? "girato il cubo di mezzo giro" : "capovolto il cubo";
     return steps.map((d, i) => (i ? MOVE_TXT[d].replace("il cubo ", "") : MOVE_TXT[d])).join(" e poi ");
@@ -5351,6 +5434,32 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       ctx.globalAlpha = 1;
       for (const [x, y] of cs) { ctx.beginPath(); ctx.arc(x, y, 3.4 * dpr, 0, 2 * Math.PI); ctx.fill(); }
       const dz = steps[nm];
+      // steps between two tiles of the face, along the turn: the wall of the higher tile has its
+      // foot at the level of the lower one (the side comes from what the tiles hide, see
+      // reliefFromViews). The size of the step comes from this very view.
+      const rel = k >= 0 && st.slots[k].res.plx && st.slots[k].res.plx.relief;
+      if (pv && rel && rel.margin >= 0.2 && nm !== "C" && rel.z[nm] != null) {
+        const G = { TL: [0, 0], T: [0, 1], TR: [0, 2], L: [1, 0], C: [1, 1], R: [1, 2], BL: [2, 0], B: [2, 1], BR: [2, 2] };
+        const AT = {}; for (const q in G) AT[G[q].join(",")] = q;
+        const [rr, cc] = G[nm] || [];
+        const zz = (q) => (q === "C" ? 0 : rel.z[q]);
+        const big = 0.06 * Math.max(...Object.values(rel.z).map((x) => Math.abs(x)));
+        for (const sd of [-1, 1]) {
+          const nb = pv.axis === "u" ? AT[rr + "," + (cc + sd)] : AT[(rr + sd) + "," + cc];
+          if (!nb || zz(nb) == null || !(zz(nm) > zz(nb) + big)) continue;      // this tile higher than the neighbour
+          const dn = nb === "C" ? 0 : steps[nb] || 0, off = (steps[nm] || 0) - dn;
+          if (Math.abs(off) < 0.04 * (r.g[1] - r.g[0])) continue;
+          // the edge towards the neighbour and its foot
+          const ed = pv.axis === "u" ? (sd > 0 ? [[b.u1, b.v0], [b.u1, b.v1]] : [[b.u0, b.v0], [b.u0, b.v1]]) : (sd > 0 ? [[b.u0, b.v1], [b.u1, b.v1]] : [[b.u0, b.v0], [b.u1, b.v0]]);
+          const top = ed.map(([u, v]) => { const q = MirrorVision.toImage(r, u, v); return map(q[0], q[1]); });
+          const foot = ed.map(([u, v]) => { const q = pv.axis === "u" ? MirrorVision.toImage(r, u - off, v) : MirrorVision.toImage(r, u, v - off); return map(q[0], q[1]); });
+          ctx.strokeStyle = "#5AC8FA"; ctx.fillStyle = "#5AC8FA"; ctx.lineWidth = 1.8 * dpr;
+          top.forEach(([x, y], i) => { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(foot[i][0], foot[i][1]); ctx.stroke(); });
+          ctx.beginPath(); ctx.moveTo(foot[0][0], foot[0][1]); ctx.lineTo(foot[1][0], foot[1][1]); ctx.stroke();
+          for (const [x, y] of foot) { ctx.beginPath(); ctx.arc(x, y, 3.2 * dpr, 0, 2 * Math.PI); ctx.fill(); }
+        }
+        continue;
+      }
       if (dz) {
         const inn = [[b.u0, b.v0], [b.u1, b.v0], [b.u1, b.v1], [b.u0, b.v1]].map(([u, v]) => {
           const q = pv.axis === "u" ? MirrorVision.toImage(r, u - dz, v) : MirrorVision.toImage(r, u, v - dz);
@@ -5411,7 +5520,10 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (r && r.job && r.g && performance.now() - r.job.t < 500) {
       const j = r.job;
       const map = (x, y) => [(j.roi.x + x / j.k) * s + ox, (j.roi.y + y / j.k) * s + oy];
-      const k = live.lastFace && performance.now() - live.lastFace.t < 900 ? live.lastFace.slot : -1;
+      // the face in view: followed without a jump in the picture since it was last seen head-on
+      // (before: only 0.9 s after that, so the dots of the other levels went away while tilting)
+      const k = twin.inView && st.slots[twin.inView.slot] && st.slots[twin.inView.slot].res ? twin.inView.slot
+        : live.lastFace && performance.now() - live.lastFace.t < 900 ? live.lastFace.slot : -1;
       drawTiles(r, map, k);
       drawArrows(r, map, k);
       if (live.turnPh) { drawReading(r, map, false); drawProgress(r, map, live.turnPh.frac || 0); }
@@ -5511,9 +5623,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     // say how the face was recognised when it came from the movement (it is also a check for
     // the user: a wrong direction is easy to spot)
     const moved = tp && tp.slot === slot;
-    toast(src === "user" ? `«${SLOTS[slot].name}» confermata` : moved && src === "track" ? `Hai ${moveText(tp.steps)}: dovrebbe essere «${SLOTS[slot].name}»`
+    toast(src === "user" ? `«${SLOTS[slot].name}» confermata` : moved && src === "track" ? `Hai ${turnText(tp.steps)}: dovrebbe essere «${SLOTS[slot].name}»`
       : guess ? `Faccia vista: ${nDone} di 6`
-      : moved ? `Hai ${moveText(tp.steps)}: questa è «${SLOTS[slot].name}»` : `Faccia vista: ${SLOTS[slot].name}`);
+      : moved ? `Hai ${turnText(tp.steps)}: questa è «${SLOTS[slot].name}»` : `Faccia vista: ${SLOTS[slot].name}`);
     if (live.last && live.last.job) trkAnchor(slot, live.last, live.last.job, performance.now());
     live.depthFor = st.calib ? null : { slot, t0: performance.now() };
     advanceLive(slot);
@@ -5545,6 +5657,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     px.lastT = now;
     px.axes = px.axes || { u: 0, v: 0 };
     px.axes[pv.axis]++;
+    if (px.turned.length >= 4) { try { px.relief = MirrorVision.reliefFromViews(px.front, px.turned); } catch (err) { px.relief = null; } }
     if (!px.depthDone && depthDone(px)) {
       px.depthDone = true;
       beep(); renderScan();
