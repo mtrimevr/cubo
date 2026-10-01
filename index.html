@@ -4657,7 +4657,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   // The name of the face in front: white when sure, yellow with "?" when provisional or only
   // suggested by the movement, red when the face must be read again.
   function faceLabel(r) {
-    if (live.pending) return { text: `${SLOTS[live.pending.slot].name}? Tocca qui`, col: "#F2C94C", pending: true };
+    if (live.pending) return { text: `${SLOTS[live.pending.slot].name}?`, col: "#F2C94C", pending: true };
     const iv = twin.inView;
     if (iv && st.slots[iv.slot] && st.slots[iv.slot].res) {
       const sl = st.slots[iv.slot];
@@ -4686,7 +4686,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   function offerConfirm(c, job, res, now) {
     const slot = st.slots[0].res ? proposeFor(c) : 0;
     live.pending = { c, job, res, slot, t: now };
-    live.tip = `Questa è «${SLOTS[slot].name}»? Tocca il nome sulla faccia per confermarlo, oppure «Cambia»`;
+    live.tip = `Questa è «${SLOTS[slot].name}»? Confermala, oppure tocca «Cambia»`;
   }
   function confirmPending(j) {
     const p = live.pending;
@@ -4698,23 +4698,72 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
   const freeSlots = () => SLOTS.map((x, j) => j).filter((j) => !st.slots[j].res || (st.flagged && st.flagged.has(j)));
   let chooser = null;
+  // the cube opened out (U above, L F R B in a row, D below) with one face marked
+  const NETPOS = { U: [1, 0], L: [0, 1], F: [1, 1], R: [2, 1], B: [3, 1], D: [1, 2] };
+  function netSvg(face) {
+    const q = 13, g = 2;
+    let out = `<svg width="${4 * (q + g)}" height="${3 * (q + g)}" viewBox="0 0 ${4 * (q + g)} ${3 * (q + g)}" aria-hidden="true">`;
+    for (const f in NETPOS) out += `<rect x="${NETPOS[f][0] * (q + g)}" y="${NETPOS[f][1] * (q + g)}" width="${q}" height="${q}" rx="2" fill="${f === face ? "#F2C94C" : "rgba(255,255,255,.22)"}"/>`;
+    return out + "</svg>";
+  }
+  function uiStyle() {
+    if (document.getElementById("confirmStyle")) return;
+    const st2 = document.createElement("style");
+    st2.id = "confirmStyle";
+    st2.textContent = `
+      .pend-bar { position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); z-index: 100; display: flex; gap: 10px; }
+      .pend-bar[hidden] { display: none; }
+      .pend-bar button { flex: 1; min-height: 52px; border-radius: 14px; border: 0; font: 600 17px/1.2 system-ui, -apple-system, sans-serif; }
+      .pend-bar .ok { background: #34C759; color: #06210f; }
+      .pend-bar .chg { background: #fff; color: #0B1220; }
+      .chooser { position: fixed; left: 0; right: 0; bottom: 0; z-index: 110; background: #0A0E16; padding: 16px 0 calc(16px + env(safe-area-inset-bottom, 0px)); border-radius: 18px 18px 0 0; }
+      .chooser h3 { margin: 0 16px 4px; color: #fff; font: 600 19px/1.3 system-ui, -apple-system, sans-serif; }
+      .chooser p { margin: 0 16px 12px; color: #C9D6DF; font: 400 14px/1.3 system-ui, -apple-system, sans-serif; }
+      .chooser .row { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 4px 16px 12px; -webkit-overflow-scrolling: touch; }
+      .chooser .card { flex: 0 0 132px; scroll-snap-align: start; min-height: 132px; border-radius: 16px; border: 2px solid rgba(255,255,255,.18); background: #18202E; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font: 600 19px/1.2 system-ui, -apple-system, sans-serif; }
+      .chooser .card small { font: 500 12px/1 system-ui, -apple-system, sans-serif; color: #F2C94C; }
+      .chooser .cancel { display: block; margin: 4px 16px 0; width: calc(100% - 32px); min-height: 48px; border-radius: 14px; border: 0; background: rgba(255,255,255,.12); color: #fff; font: 600 16px/1 system-ui, -apple-system, sans-serif; }`;
+    document.head.append(st2);
+  }
+  // «Cambia»: the five other faces (the one proposed is the one being changed), as large cards in
+  // a row to scroll; a face already read can be chosen too (this reading replaces the old one)
   function openChooser() {
     if (!live.pending) return;
-    closeChooser();
+    closeChooser(); uiStyle();
+    const prop = live.pending.slot;
     chooser = document.createElement("div");
-    chooser.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:60;background:rgba(10,14,22,.96);padding:14px 14px calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;gap:8px;justify-content:center";
-    const title = document.createElement("div");
-    title.textContent = "Che faccia è?"; title.style.cssText = "width:100%;text-align:center;color:#fff;font-weight:600;margin-bottom:4px";
-    chooser.append(title);
-    for (const j of freeSlots()) {
-      const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = SLOTS[j].name;
+    chooser.className = "chooser";
+    chooser.innerHTML = `<h3>Che faccia è?</h3><p>Scorri e tocca quella giusta</p><div class="row"></div>`;
+    const row = chooser.querySelector(".row");
+    for (let j = 0; j < 6; j++) {
+      if (j === prop) continue;
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "card"; b.dataset.name = SLOTS[j].name;
+      b.innerHTML = `${netSvg(SLOTS[j].face)}<span>${SLOTS[j].name}</span>${st.slots[j].res ? "<small>già letta</small>" : ""}`;
       b.addEventListener("click", (e) => { e.stopPropagation(); confirmPending(j); });
-      chooser.append(b);
+      row.append(b);
     }
-    const no = document.createElement("button"); no.type = "button"; no.className = "btn"; no.textContent = "Annulla";
+    const no = document.createElement("button");
+    no.type = "button"; no.className = "cancel"; no.textContent = "Annulla";
     no.addEventListener("click", (e) => { e.stopPropagation(); closeChooser(); });
     chooser.append(no);
     document.body.append(chooser);
+  }
+  // the bar under the picture while a new face waits: confirm, or change the name
+  let pendBar = null;
+  function pendingUI() {
+    if (!pendBar) {
+      uiStyle();
+      pendBar = document.createElement("div");
+      pendBar.className = "pend-bar"; pendBar.hidden = true;
+      pendBar.innerHTML = `<button type="button" class="ok"></button><button type="button" class="chg">⇄ Cambia</button>`;
+      pendBar.querySelector(".ok").addEventListener("click", (e) => { e.stopPropagation(); if (live.pending) confirmPending(live.pending.slot); });
+      pendBar.querySelector(".chg").addEventListener("click", (e) => { e.stopPropagation(); openChooser(); });
+      document.body.append(pendBar);
+    }
+    const p = live.on && live.pending && !chooser ? live.pending : null;
+    if (p) { const t = `✓ È «${SLOTS[p.slot].name}»`; if (pendBar.firstChild.textContent !== t) pendBar.firstChild.textContent = t; }
+    if (pendBar.hidden !== !p) pendBar.hidden = !p;
   }
   function closeChooser() { if (chooser) { chooser.remove(); chooser = null; } }
   // taps on the live picture: on the name to confirm it, on «Cambia» to choose another face.
@@ -4725,13 +4774,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const r = stage.getBoundingClientRect(), x = ((e.clientX - r.left) * stage.width) / r.width, y = ((e.clientY - r.top) * stage.height) / r.height;
     const inside = (b) => b && x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
     if (inside(lab.box)) confirmPending(live.pending.slot);
-    else if (inside(lab.change)) openChooser();
   });
   // turn of the face of box j for reading r, from the corners shared with the faces already in
   function bestTurn(j, r) {
     if (j === 0) return 0;
     const placed = {};
-    st.slots.forEach((x) => { if (x.res && x.res.ok) placed[x.face] = x.frameRes || x.res; });
+    st.slots.forEach((x, i) => { if (i !== j && x.res && x.res.ok) placed[x.face] = x.frameRes || x.res; });
     const all = MirrorVision.placeFace(placed, r).filter((q) => q.P === SLOTS[j].face && q.c != null && q.n > 0).sort((a, b) => a.c - b.c);
     return all.length ? all[0].k : 0;
   }
@@ -4759,13 +4807,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     ctx.fillText(lab.text, 0, lab.size * 0.06);
     lab.box = null; lab.change = null;
     if (live.pending) {
-      // «Cambia» under the name; tap areas a little larger than what is drawn
-      const cy = hh * 1.15, cw = ctx.measureText("Cambia").width + 2 * pad, chh = hh * 0.9;
-      ctx.beginPath(); ctx.rect(-cw / 2, cy - chh / 2, cw, chh); ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fill();
-      ctx.fillStyle = "#FFFFFF"; ctx.fillText("Cambia", 0, cy + lab.size * 0.06);
       const m = 14 * dpr;
-      lab.box = [lab.x - ww / 2 - m, lab.y - hh / 2 - m, lab.x + ww / 2 + m, lab.y + hh / 2 + 4];
-      lab.change = [lab.x - cw / 2 - m, lab.y + cy - chh / 2 + 4, lab.x + cw / 2 + m, lab.y + cy + chh / 2 + m];
+      lab.box = [lab.x - ww / 2 - m, lab.y - hh / 2 - m, lab.x + ww / 2 + m, lab.y + hh / 2 + m];
     }
     if (window.__labTest) window.__labBox = live.pending && lab.box ? { box: lab.box, change: lab.change, w: stage.width, h: stage.height, name: SLOTS[live.pending.slot].name } : null;
     ctx.restore();
@@ -4953,6 +4996,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     window.scrollTo(0, 0);
   });
   function stopLive() {
+    live.pending = null; closeChooser(); if (pendBar) pendBar.hidden = true;
     stopRecording();
     $("#flashBtn").hidden = true;
     live.turnPh = null;
@@ -5376,9 +5420,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (good) { drawMissing(r, map, live.cand.cov && live.cand.cov.missing); drawProgress(r, map, live.cand.frac || 0); }
       if (!live.check) drawFaceLabel(r, map, s / j.k);
     } else if (!live.check) drawFaceLabel(null);
+    pendingUI();
     if (!live.check) drawMiniMap();
     const tip = $("#liveTip");
-    if (tip.textContent !== live.tip) tip.textContent = live.tip;
+    // while a new face waits for its name, the tip is the question
+    const tipText = live.pending ? `Questa è «${SLOTS[live.pending.slot].name}»? Confermala, oppure tocca «Cambia»` : live.tip;
+    if (tip.textContent !== tipText) tip.textContent = tipText;
     const pill = live.check ? "Controllo della posizione" : `Faccia ${st.cur + 1} di 6: ${SLOTS[st.cur].name}`;
     if (live.lastPill !== pill) { live.lastPill = pill; setPill("busy", pill); }
   }
