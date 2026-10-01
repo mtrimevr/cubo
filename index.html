@@ -3542,7 +3542,7 @@ const MirrorVision = (() => {
           if (!(nm in POS) || nm === "C") continue;
           const idx = fi * 9 + POS[nameOf(nm)], est = d.thick[P] + r.orbit.z[nm];
           extra.push({ idx, x: est, w: 2, P, key: "plx" });
-          plxInfo.push({ idx, est, P, slot: j });
+          plxInfo.push({ idx, est, P, slot: j, orbit: true });
         }
         return;
       }
@@ -3576,7 +3576,13 @@ const MirrorVision = (() => {
     // (or nearly flat) cube every tile sits at the depth of its centre, so it stays silent.
     const lever = extra.filter((e) => e.key !== "plx" && Math.abs(d.thick[d.facelets[e.idx]] - d.thick[e.P]) > 5).length;
     d.persp = lever >= 4 ? { n: nPersp, bad: bad.filter((b) => b.key !== "plx" && !withPlx.has(b.idx)) } : { n: 0, bad: [], off: true };
-    d.plx = { n: plxInfo.length, bad: plxInfo.filter((e) => Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 8) };
+    // heights from the turn round a face: a face with big steps hides some edges and a tile can be
+    // far off while the decode is right (synthetic scan: 0 errors, a tile 34 points off), so they
+    // ask for a new reading only with two tiles of the same face more than 10 points off
+    const offO = plxInfo.filter((e) => e.orbit && Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 10);
+    const perSlot = {};
+    for (const e of offO) perSlot[e.slot] = (perSlot[e.slot] || 0) + 1;
+    d.plx = { n: plxInfo.length, bad: plxInfo.filter((e) => (e.orbit ? perSlot[e.slot] >= 2 && Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 10 : Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 8)) };
     const placed = { F: 0 }, turned = { F: 0 };
     others.forEach((P, i) => { placed[P] = best.t.perm[i]; turned[P] = (best.t.code >> (2 * i)) & 3; });
     const second = top.find((t) => t !== best.t);
@@ -4705,6 +4711,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   function onOrientation(e) {
     if (e.alpha == null || e.beta == null || e.gamma == null) return;
     const t = performance.now();
+    if (!ori.buf.length && live.on && !st.slots[0].res && !live.check) live.tip = "Appoggia il cubo sul tavolo e non muoverlo più: gira tu attorno con il telefono. Inquadra la faccia davanti";
     ori.buf.push({ t, o: [e.alpha, e.beta, e.gamma] });
     if (ori.buf.length > 300) ori.buf.shift();
     if (live.rec && live.recT0 != null) {
@@ -4717,18 +4724,58 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     for (let i = ori.buf.length - 1; i >= 0; i--) { const q = ori.buf[i]; if (!best || Math.abs(q.t - t) < Math.abs(best.t - t)) best = q; if (q.t < t - 300) break; }
     return best && Math.abs(best.t - t) < 150 ? best.o : null;
   }
+  // ---------- cube still on the table (with the motion sensors) ----------
+  // The cube stays still and the phone goes round it: the phone's orientation says which face the
+  // camera is looking at and how it is turned, without guessing from the measures. The frame of
+  // the cube in the world is set again at every face recognised head-on (a small bump is corrected
+  // there), dropped when the measures clearly disagree (the cube was moved) and while the cube is
+  // turned upside down for «Sotto».
+  const FIXED = true;
+  const fixed = { R: null, flipped: false, flipTo: null, upside: false };
+  const oriM = (o) => {
+    const [a, b, g] = [o[0], o[1], o[2]].map((x) => (x * Math.PI) / 180);
+    const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
+    return [[ca * cg - sa * sb * sg, -sa * cb, ca * sg + sa * sb * cg], [sa * cg + ca * sb * sg, ca * cb, sa * sg - ca * sb * cg], [-cb * sg, sb, cb * cg]];
+  };
+  const mul3 = (A, B) => A.map((row) => [0, 1, 2].map((j) => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
+  const tr3 = (A) => [0, 1, 2].map((i) => [A[0][i], A[1][i], A[2][i]]);
+  // face of box `slot` in front in reading res, turned q (rotateReading(res, q) = unfolded view)
+  function fixCube(slot, q, res) {
+    if (!FIXED || !res || !res.ori || fixed.flipped) return;
+    const f = MirrorVision.photoFrame(SLOTS[slot].face, q), c = Math.cos(res.theta || 0), s = Math.sin(res.theta || 0);
+    const dx = [0, 1, 2].map((i) => c * f.r[i] + s * f.u[i]), dy = [0, 1, 2].map((i) => -s * f.r[i] + c * f.u[i]), dz = f.n;
+    fixed.R = mul3(oriM(res.ori), [[dx[0], dx[1], dx[2]], [dy[0], dy[1], dy[2]], [dz[0], dz[1], dz[2]]]);   // cube -> world
+  }
+  // Which face the camera looks at: { P, q (turn of this reading), deg (from straight on), frame } or null.
+  function faceFromPhone(res) {
+    if (!FIXED || !fixed.R || fixed.flipped || !res || !res.ori) return null;
+    const M = mul3(tr3(fixed.R), oriM(res.ori));        // device axes in the cube frame (columns)
+    const n = [M[0][2], M[1][2], M[2][2]], right = [M[0][0], M[1][0], M[2][0]], up = [M[0][1], M[1][1], M[2][1]];
+    const c = Math.cos(res.theta || 0), s = Math.sin(res.theta || 0);
+    const rr = [0, 1, 2].map((i) => M[i][0] * c - M[i][1] * s);   // right of the reading (grid u axis)
+    const big = (v) => { let k = 0; for (let i = 1; i < 3; i++) if (Math.abs(v[i]) > Math.abs(v[k])) k = i; const a = [0, 0, 0]; a[k] = Math.sign(v[k]) || 1; return a; };
+    const nA = big(n), rA = big(rr.map((x, i) => (nA[i] ? 0 : x)));
+    const uA = [nA[1] * rA[2] - nA[2] * rA[1], nA[2] * rA[0] - nA[0] * rA[2], nA[0] * rA[1] - nA[1] * rA[0]];
+    const ff = MirrorVision.frameFace({ n: nA, r: rA, u: uA });
+    const deg = (Math.acos(Math.min(1, Math.abs(n[0] * nA[0] + n[1] * nA[1] + n[2] * nA[2]))) * 180) / Math.PI;
+    return ff ? { P: ff.P, q: ff.q, deg, frame: { n, r: right, u: up } } : null;
+  }
   const ringSector = (tf) => Math.floor(((Math.atan2(-tf.b, -tf.a) + 2 * Math.PI + Math.PI / 8) % (2 * Math.PI)) / (Math.PI / 4)) % 8;
   // full enough: five sides out of eight seen twice, or plenty of views from at least four sides
   const ringFull = (px) => !!px.ring && (px.ring.filter((n) => n >= 2).length >= 5 || (px.orbit.length >= 14 && px.ring.filter((n) => n >= 1).length >= 4));
   // With the motion sensors: views all round the face (the ring on the screen), then the height of
   // every tile from their parallax.
   function collectOrbit(slot, px, res, now) {
+    // the sensors only see the phone: a view of another face (the cube turned over, or turned by
+    // hand) must not go into this ring. Its measures would tell it apart.
+    if (res.ok && res.ext && MirrorVision.sameFace(res, st.slots[slot].res, 6) > 9) return;
+    if (px.orbitHold) return;              // another face was seen from the front: wait for this one again
     const tf = MirrorVision.turnFromOrientation(px.front.ori, res.ori, res.theta || 0);
     if (window.__dbgOrbit) window.__dbgOrbit.push({ t: Math.round(now), f: px.front.ori, o: res.ori, tf, n: px.orbit ? px.orbit.length : 0, ring: px.ring ? px.ring.join("") : "" });
     if (!tf) return;
     px.orbit = px.orbit || []; px.ring = px.ring || new Array(8).fill(0);
     if (tf.deg >= 6 && tf.deg <= 30 && px.orbit.length < 60 && now - (px.lastO || 0) >= 80) {
-      px.orbit.push({ edges: res.edges, a: tf.a, b: tf.b });
+      px.orbit.push({ edges: res.edges, a: tf.a, b: tf.b, t: now });
       px.ring[ringSector(tf)]++;
       px.lastO = now;
     }
@@ -4780,18 +4827,30 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
   // How to bring the face of box `slot` in front, from the face in front now: a quarter turn
   // for a neighbour, half a turn for the opposite face (turned upside down for top and bottom).
+  const PHONETXT = { left: "sposta il telefono verso destra, girando attorno al cubo", right: "sposta il telefono verso sinistra, girando attorno al cubo", down: "alza il telefono e guarda il cubo dall'alto", up: "abbassa il telefono e guarda il cubo dal basso" };
+  const FLIPTXT = "capovolgi il cubo sul tavolo, così la faccia di sotto va sopra, e guardalo dall'alto";
+  const FLIPBACK = "rigira il cubo com'era all'inizio e guardalo dall'alto";
+  const phoneMode = () => FIXED && ori.on && ori.buf.length > 0;
   function pathTo(slot) {
     const A = trk.anchor;
     if (!A || slot < 0) return null;
-    const want = SLOTS[slot].face;
+    const want = SLOTS[slot].face, pm = phoneMode();
     if (SLOTS[A.slot].face === want) return { steps: [], text: "" };
     const fr = MirrorVision.photoFrame(SLOTS[A.slot].face, A.q);
-    for (const d of ["left", "right", "down", "up"]) { const f = MirrorVision.frameFace(MirrorVision.turnFrame(fr, d)); if (f && f.P === want) return { steps: [d], text: DIRTXT[d] }; }
+    for (const d of ["left", "right", "down", "up"]) {
+      const f = MirrorVision.frameFace(MirrorVision.turnFrame(fr, d));
+      // on the table the face underneath can only be reached by turning the cube over
+      const under = pm && want === (fixed.upside ? "U" : "D");
+      if (f && f.P === want) return { steps: [d], text: pm ? (under ? (fixed.upside ? FLIPBACK : FLIPTXT) : PHONETXT[d]) : DIRTXT[d], flip: under };
+    }
+    if (pm) return want === (fixed.upside ? "U" : "D") ? { steps: ["up", "up"], text: fixed.upside ? FLIPBACK : FLIPTXT, flip: true } : { steps: ["left", "left"], text: "gira attorno al cubo fino al lato opposto" };
     return want === "U" || want === "D" ? { steps: ["up", "up"], text: "capovolgi il cubo, inclinandolo due volte lontano da te" } : { steps: ["left", "left"], text: "gira il cubo di mezzo giro" };
   }
   function guideTip(slot) {
     if (slot < 0) return "continua a ruotare piano";
     const pth = pathTo(slot);
+    // turned upside down for the bottom face: the sensors no longer know where the cube is
+    if (pth && pth.flip) { fixed.flipped = true; fixed.flipTo = SLOTS[slot].face; }
     if (!pth) return `mostrami «${SLOTS[slot].name}»`;
     if (!pth.steps.length) return `tieni ferma «${SLOTS[slot].name}»`;
     return `${pth.text}: ora «${SLOTS[slot].name}»`;
@@ -4827,6 +4886,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
   function trkReset() {
     trk.anchor = null; trk.seq = []; trk.front = []; live.guess = null;
+    if (typeof fixed !== "undefined") Object.assign(fixed, { R: null, flipped: false, flipTo: null, upside: false });
     Object.assign(twin, { inView: null, chain: null, frame: null, pred: null, tilt: [0, 0] });
   }
   // ---------- the cube in front of the camera: twin model and face label ----------
@@ -4927,6 +4987,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const e = trkEntry(res, job, now);
     trk.seq.push(e);
     twinFollow(e);
+    const gp = faceFromPhone(res);
+    if (gp) {
+      twin.frame = gp.frame; twin.pred = null; twin.tilt = [0, 0];
+      const jj = SLOTS.findIndex((x) => x.face === gp.P);
+      twin.inView = gp.deg < 35 && jj >= 0 && st.slots[jj].res ? { slot: jj, t: now } : null;
+    }
     // still the face of the anchor, seen from the front again (it never left the picture): the
     // movement starts again from here, however long you stay on it and however its measures change
     const s0 = trk.seq[0];
@@ -4964,6 +5030,10 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (trk.front.length > 8) trk.front.shift();
     trk.anchor = { slot, q: (k + (sl.turn || 0)) % 4, t: now };
     trk.seq = [e];
+    if (sl.res && sl.res.plx) sl.res.plx.orbitHold = false;           // back on this face
+    // the face asked for after turning the cube over: the sensors know where the cube is again
+    if (fixed.flipped && SLOTS[slot].face === fixed.flipTo) { fixed.flipped = false; fixed.upside = fixed.flipTo === "D"; fixed.flipTo = null; }
+    fixCube(slot, trk.anchor.q, res);
     twinSet(slot, trk.anchor.q, e, now);
   }
   // Test harness only (window.__trkChecks): a face seen before comes back in front, so its box
@@ -5338,7 +5408,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     // 2) after a confirmation, wait until the cube has really been turned
     if (live.waitTurn && whole) {
       const prev = st.slots[live.waitTurn.slot].res;
-      if (alignTo(prev, res) >= 0) { live.waitTurn.seen = now; if (!tilted && !msg) trkAnchor(live.waitTurn.slot, res, job, now); if (!msg) msg = live.depthFor ? "ora inclina un po' il cubo, circa 20 gradi: in su, in giù, a destra e a sinistra" : (GUIDED ? `girato? ${cap(guideTip(st.cur))}` : "girato? Mostrami la faccia successiva"); bad = true; }
+      if (alignTo(prev, res) >= 0) { live.waitTurn.seen = now; if (!tilted && !msg) trkAnchor(live.waitTurn.slot, res, job, now); if (!msg) msg = live.depthFor ? (phoneMode() ? "muovi il telefono in un piccolo cerchio attorno alla faccia" : "ora inclina un po' il cubo, circa 20 gradi: in su, in giù, a destra e a sinistra") : (GUIDED ? `girato? ${cap(guideTip(st.cur))}` : "girato? Mostrami la faccia successiva"); bad = true; }
       else live.waitTurn = null;
     } else if (live.waitTurn && now - live.waitTurn.seen > 250) live.waitTurn = null;
     if (res.ok && !msg) {
@@ -5379,7 +5449,20 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (c.frac >= 1 && consistent(reads)) {
         const twin = already(c.merged, 5);
         if (twin >= 0) { live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: twin, t: now }; trkAnchor(twin, res, job, now); return; }
-        if (live.depthFor) { live.recent = []; live.cand = null; live.last = res; live.tip = `Prima finisco «${SLOTS[live.depthFor.slot].name}»: torna su quella faccia e inclinala un po'`; return; }
+        if (live.depthFor) {
+          // the camera sees another face from the front: the views of the ring since it appeared are
+          // not of this face (the cube turned over, or turned by hand); none until this face is back
+          const pxd = st.slots[live.depthFor.slot].res && st.slots[live.depthFor.slot].res.plx;
+          if (pxd && pxd.orbit && !pxd.orbitDone) {
+            pxd.orbit = pxd.orbit.filter((v) => v.t < c.t0);
+            pxd.ring = new Array(8).fill(0);
+            for (const v of pxd.orbit) pxd.ring[ringSector(v)]++;
+            pxd.orbitHold = true;
+          }
+          live.recent = []; live.cand = null; live.last = res;
+          live.tip = `Prima finisco «${SLOTS[live.depthFor.slot].name}»: torna su quella faccia${phoneMode() ? " e muovi il telefono attorno" : " e inclinala un po'"}`;
+          return;
+        }
         // The cube has not been turned since a face already in (the views move on without the
         // jump of a change of face): it is that face again, read with other measures. Real
         // scrambled scan of 29 September: two boxes got the same face this way, twice.
@@ -5396,6 +5479,17 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
             live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: A.slot, t: now };
             live.tip = `«${SLOTS[A.slot].name}» l'ho già vista. ${cap(guideTip(nextOpen(-1) >= 0 ? st.cur : -1))}`;
             return;
+          }
+        }
+        if (FIXED && res.ori && fixed.R && !fixed.flipped) {
+          const g = faceFromPhone(res), j = g && g.deg < 25 ? SLOTS.findIndex((x) => x.face === g.P) : -1;
+          if (j >= 0 && st.slots[j].res && !(st.flagged && st.flagged.has(j))) {
+            if (MirrorVision.sameFace(st.slots[j].res, c.merged, 6) < 6) {
+              live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: j, t: now };
+              live.tip = `«${SLOTS[j].name}» l'ho già vista. ${cap(guideTip(nextOpen(-1) >= 0 ? st.cur : -1))}`;
+              return;
+            }
+            fixed.R = null;               // the measures say another face: the cube was moved
           }
         }
         const to = boxForNew(slot);
@@ -5553,7 +5647,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     ctx.restore();
   }
 
-  function chooseSlot(r, fallback, tp) {
+  function chooseSlot(r, fallback, tp, gy) {
     if (!st.slots[0].res || (st.flagged && st.flagged.has(fallback))) return fallback;
     const placed = {};
     st.slots.forEach((x, j) => { if (x.res && x.res.ok) placed[SLOTS[j].face] = x.frameRes || x.res; });
@@ -5574,7 +5668,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const tpC = tpF ? all.find((q) => q.P === tpF && q.k === tp.turn) : null;
     const veto = false;
     let src = "guess";
+    const gyj = gy ? SLOTS.findIndex((x) => x.face === gy.P) : -1;
     if (ns && ns.v < 4 && ns.gap > 1.2 && !placed[ns.P]) { P = ns.P; k = (4 - ns.k) % 4; src = "model"; }
+    else if (gy && gyj > 0 && !st.slots[gyj].res) { P = gy.P; k = gy.k; src = "gyro"; }
     else if (best && best.c < 6 && (!second || second.c > best.c + 4)) { P = best.P; k = best.k; src = "corners"; }
     else if (GUIDED && fallback > 0 && !st.slots[fallback].res) {
       // guided order: it is the face asked for; its turn from the corners when they are clear
@@ -5606,7 +5702,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     delete final.job;
     const canvas = lastRes.job ? lastRes.job.crop : job.crop;
     const tp = st.slots[0].res ? trkPredict(c, final) : null;
-    slot = chooseSlot(final, slot, tp);
+    const gr = st.slots[0].res ? faceFromPhone(lastRes) : null;
+    const gy = gr && gr.deg < 30 ? { P: gr.P, k: (((gr.q - Math.max(0, turnOnto(final, lastRes))) % 4) + 4) % 4 } : null;
+    slot = chooseSlot(final, slot, tp, gy);
     const src = final.__src || "guess", why = final.__why || null;
     // a place found from the movement alone stays provisional (the turned views of a scrambled
     // face are rough): the final check can still rename it
@@ -5624,13 +5722,13 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     // say how the face was recognised when it came from the movement (it is also a check for
     // the user: a wrong direction is easy to spot)
     const moved = tp && tp.slot === slot;
-    toast(src === "guided" ? `Ecco «${SLOTS[slot].name}»` : moved && src === "track" ? `Hai ${moveText(tp.steps)}: dovrebbe essere «${SLOTS[slot].name}»`
+    toast(src === "guided" || src === "gyro" ? `Ecco «${SLOTS[slot].name}»` : moved && src === "track" ? `Hai ${moveText(tp.steps)}: dovrebbe essere «${SLOTS[slot].name}»`
       : guess ? `Faccia vista: ${nDone} di 6`
       : moved ? `Hai ${moveText(tp.steps)}: questa è «${SLOTS[slot].name}»` : `Faccia vista: ${SLOTS[slot].name}`);
     if (live.last && live.last.job) trkAnchor(slot, live.last, live.last.job, performance.now());
     live.depthFor = st.calib ? null : { slot, t0: performance.now() };
     advanceLive(slot);
-    if (live.depthFor) live.tip = ori.on && fr && fr.ori ? `Ora tieni fermo il cubo e muovi piano il telefono attorno a «${SLOTS[slot].name}»: riempi l'anello`
+    if (live.depthFor) live.tip = ori.on && fr && fr.ori ? `Ora muovi piano il telefono in un piccolo cerchio attorno a «${SLOTS[slot].name}», senza toccare il cubo: riempi l'anello`
       : `Ora inclina un po' il cubo, in su, in giù, a destra e a sinistra: misuro la profondità di «${SLOTS[slot].name}»`;
     return slot;
   }
