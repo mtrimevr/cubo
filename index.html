@@ -3535,17 +3535,6 @@ const MirrorVision = (() => {
       const nameOf = (nm) => { let x = nm; for (let q = 0; q < kk; q++) x = ROT90[x]; return x; };
       const known = {};
       for (const nm of Object.keys(POS)) if (nm !== "C") known[nm] = d.thick[d.facelets[fi * 9 + POS[nameOf(nm)]]] - d.thick[P];
-      // heights measured on the face itself from views all round it (phone motion sensors):
-      // independent of this decode, so they can correct it
-      if (r.orbit && r.orbit.z) {
-        for (const nm in r.orbit.z) {
-          if (!(nm in POS) || nm === "C") continue;
-          const idx = fi * 9 + POS[nameOf(nm)], est = d.thick[P] + r.orbit.z[nm];
-          extra.push({ idx, x: est, w: 2, P, key: "plx" });
-          plxInfo.push({ idx, est, P, slot: j, orbit: true });
-        }
-        return;
-      }
       const pf = parallaxFace(r.plx.front, r.plx.turned || [], known);
       for (const nm in pf.tiles) {
         const idx = fi * 9 + POS[nameOf(nm)];
@@ -3576,13 +3565,7 @@ const MirrorVision = (() => {
     // (or nearly flat) cube every tile sits at the depth of its centre, so it stays silent.
     const lever = extra.filter((e) => e.key !== "plx" && Math.abs(d.thick[d.facelets[e.idx]] - d.thick[e.P]) > 5).length;
     d.persp = lever >= 4 ? { n: nPersp, bad: bad.filter((b) => b.key !== "plx" && !withPlx.has(b.idx)) } : { n: 0, bad: [], off: true };
-    // heights from the turn round a face: a face with big steps hides some edges and a tile can be
-    // far off while the decode is right (synthetic scan: 0 errors, a tile 34 points off), so they
-    // ask for a new reading only with two tiles of the same face more than 10 points off
-    const offO = plxInfo.filter((e) => e.orbit && Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 10);
-    const perSlot = {};
-    for (const e of offO) perSlot[e.slot] = (perSlot[e.slot] || 0) + 1;
-    d.plx = { n: plxInfo.length, bad: plxInfo.filter((e) => (e.orbit ? perSlot[e.slot] >= 2 && Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 10 : Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 8)) };
+    d.plx = { n: plxInfo.length, bad: plxInfo.filter((e) => Math.abs(e.est - d.thick[d.facelets[e.idx]]) > 8) };
     const placed = { F: 0 }, turned = { F: 0 };
     others.forEach((P, i) => { placed[P] = best.t.perm[i]; turned[P] = (best.t.code >> (2 * i)) & 3; });
     const second = top.find((t) => t !== best.t);
@@ -4007,100 +3990,6 @@ const MirrorVision = (() => {
     }
   }
 
-  // ---------- heights of the tiles of one face, from views whose turn is known (gyroscope) ----------
-  // front: { res: { g, h }, edges } frontal view. views: [{ edges, a, b }] with a, b = tan of the
-  // turn of the face along the grid axes u (right) and v (down) of that view: where the face looks
-  // (from the phone's motion sensors, the cube held still). Positions are measured from the centre
-  // tile and scaled by its size along each axis in every view (zoom and the shortening of the face
-  // plane go away): what is left is the parallax, height * (a, b). A tile higher than its neighbour
-  // covers the neighbour's edge when it moves towards it: those edge readings are left out.
-  // Returns { z: { TL: %, ... } (> 0 sticks out towards the camera, % of the side, from the centre
-  // tile), n: views, fit: rms residual in % } or null.
-  function orbitHeightsGyro(front, views, opt = {}) {
-    const e0 = front && front.edges;
-    if (!e0 || !e0.C || !front.res || !front.res.g) return null;
-    const C0 = e0.C, w0 = C0.u1 - C0.u0, h0 = C0.v1 - C0.v0;
-    const toPct = 33.6 / (front.res.g[1] - front.res.g[0]);
-    const GRID = { TL: [0, 0], T: [0, 1], TR: [0, 2], L: [1, 0], C: [1, 1], R: [1, 2], BL: [2, 0], B: [2, 1], BR: [2, 2] };
-    const AT = {}; for (const nm in GRID) AT[GRID[nm].join(",")] = nm;
-    const names = Object.keys(e0).filter((nm) => nm !== "C" && GRID[nm]);
-    // observations: [tile, axis (0 u, 1 v), side (0 low edge, 1 high edge), residual, a or b]
-    const obs = [];
-    let nv = 0;
-    for (const v of views) {
-      const e = v.edges;
-      if (!e || !e.C || typeof v.a !== "number" || typeof v.b !== "number") continue;
-      const C = e.C, w = C.u1 - C.u0, h = C.v1 - C.v0;
-      if (!(w > 0.55 * w0 && h > 0.55 * h0 && w < 1.8 * w0 && h < 1.8 * h0)) continue;
-      let k = 0;
-      for (const nm of names) {
-        const p = e0[nm], q = e[nm];
-        if (!q) continue;
-        // a tile that looks much bigger or smaller than from the front is another patch of gold
-        // (the next face, a neighbour joined to it) or mostly hidden: not this tile
-        const ru = ((q.u1 - q.u0) / w) * w0 / Math.max(1, p.u1 - p.u0), rv = ((q.v1 - q.v0) / h) * h0 / Math.max(1, p.v1 - p.v0);
-        if (ru < 0.5 || ru > 1.6 || rv < 0.5 || rv > 1.6) continue;
-        const pu = (x0, x) => ((x - C.u0) / w) * w0 - (x0 - C0.u0), pv = (y0, y) => ((y - C.v0) / h) * h0 - (y0 - C0.v0);
-        // only the edges between two tiles of this face: past the outer edge, the gold of the next
-        // face shows up when the face turns and joins the tile
-        const [r, c] = GRID[nm];
-        if (c > 0) obs.push([nm, 0, 0, pu(p.u0, q.u0), v.a]);
-        if (c < 2) obs.push([nm, 0, 1, pu(p.u1, q.u1), v.a]);
-        if (r > 0) obs.push([nm, 1, 0, pv(p.v0, q.v0), v.b]);
-        if (r < 2) obs.push([nm, 1, 1, pv(p.v1, q.v1), v.b]);
-        k++;
-      }
-      if (k) nv++;
-    }
-    if (nv < (opt.minViews || 6)) return null;
-    let z = {};
-    for (const nm of names) z[nm] = 0;
-    const neighbour = (nm, axis, side) => { const [r, c] = GRID[nm]; const rr = axis === 1 ? r + (side ? 1 : -1) : r, cc = axis === 0 ? c + (side ? 1 : -1) : c; return AT[rr + "," + cc] || null; };
-    let wts = obs.map(() => 1);
-    for (let it = 0; it < 6; it++) {
-      const num = {}, den = {};
-      obs.forEach((o, i) => {
-        let w = wts[i];
-        if (it > 0) {
-          // covered by a higher neighbour moving towards this edge
-          const nb = neighbour(o[0], o[1], o[2]);
-          const zn = nb === "C" ? 0 : nb ? z[nb] : null;
-          if (zn != null && zn > z[o[0]] + 2 / toPct && (o[2] === 0 ? o[4] > 0 : o[4] < 0)) w = 0;
-        }
-        num[o[0]] = (num[o[0]] || 0) + w * o[4] * o[3];
-        den[o[0]] = (den[o[0]] || 0) + w * o[4] * o[4];
-      });
-      for (const nm of names) z[nm] = den[nm] > 1e-9 ? num[nm] / den[nm] : 0;
-      // robust weights
-      const r = obs.map((o) => Math.abs(o[3] - z[o[0]] * o[4]));
-      const s = r.slice().sort((x, y) => x - y)[Math.floor(r.length / 2)] * 1.5 + 0.3;
-      wts = r.map((x) => (x <= 2 * s ? 1 : (2 * s) / x));
-    }
-    let rs = 0, nn = 0;
-    obs.forEach((o) => { rs += (o[3] - z[o[0]] * o[4]) ** 2; nn++; });
-    const out = {};
-    for (const nm of names) out[nm] = +(z[nm] * toPct).toFixed(2);
-    return { z: out, n: nv, fit: +(Math.sqrt(rs / nn) * toPct).toFixed(2) };
-  }
-  // Turn of a view from the phone's orientation (deviceorientation alpha, beta, gamma in degrees)
-  // against the orientation at the frontal view, in the grid frame of the view (angle th):
-  // { a, b } = tan of the turn towards u and v (where the face looks), the cube held still.
-  function turnFromOrientation(o0, o1, th) {
-    const R = (o) => {
-      const [a, b, g] = [o[0], o[1], o[2]].map((x) => (x * Math.PI) / 180);
-      const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
-      return [[ca * cg - sa * sb * sg, -sa * cb, ca * sg + sa * sb * cg], [sa * cg + ca * sb * sg, ca * cb, sa * sg - ca * sb * cg], [-cb * sg, sb, cb * cg]];
-    };
-    const R0 = R(o0), R1 = R(o1);
-    // normal of the face in the frame of the device now: R1^T R0 (0,0,1); camera frame: y and z flipped
-    const e = [R0[0][2], R0[1][2], R0[2][2]];
-    const d = [R1[0][0] * e[0] + R1[1][0] * e[1] + R1[2][0] * e[2], R1[0][1] * e[0] + R1[1][1] * e[1] + R1[2][1] * e[2], R1[0][2] * e[0] + R1[1][2] * e[1] + R1[2][2] * e[2]];
-    const nx = d[0], ny = -d[1], nz = -d[2];
-    if (nz > -0.3) return null;
-    const a = nx / -nz, b = ny / -nz, c = Math.cos(th || 0), s = Math.sin(th || 0);
-    return { a: a * c + b * s, b: -a * s + b * c, deg: (Math.atan(Math.hypot(a, b)) * 180) / Math.PI };
-  }
-
   function toImage(res, up, vp) {
     const u = up + res.uMin, v = vp + res.vMin;
     return [u * res.cs - v * res.sn, u * res.sn + v * res.cs];
@@ -4141,7 +4030,7 @@ const MirrorVision = (() => {
     });
   }
 
-  return { orbitHeightsGyro, turnFromOrientation, photoFrame, frameFace, turnFrame, viewEntry, followTurn, analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, sameFaceStrict, placeFace, solvedModel, nameSolved, rotateReading, sameFace, ROTS, TARGET, STICKERS };
+  return { photoFrame, frameFace, turnFrame, viewEntry, followTurn, analyze, analyzeScrambled, toImage, calibrate, calibrateScan, decode, decodeAuto, decodeFlexible, decodeFree, tileEdges, parallaxView, parallaxDepths, parallaxFace, sameFaceStrict, placeFace, solvedModel, nameSolved, rotateReading, sameFace, ROTS, TARGET, STICKERS };
 })();
 
 if (typeof module !== "undefined") module.exports = MirrorVision;
@@ -4692,179 +4581,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   // cube was named only from its measures and often got a wrong name (real scan of 29
   // September: the cube turned to the right, the new face taken for «Sopra»).
   const trk = { anchor: null, seq: [], front: [] };
-  // ---------- phone orientation (motion sensors), for the heights of the tiles ----------
-  // During the turn round a face the phone moves and the cube stays still: the orientation of the
-  // phone says exactly where the face looks in every view and by how much (sign and size of the
-  // parallax, which the picture alone gets wrong on a scrambled cube). iPhone: permission is asked
-  // inside the tap that starts the live scan.
-  const ori = { on: false, asked: false, buf: [], log: [] };
-  function askOrientation() {
-    if (ori.asked) return;
-    ori.asked = true;
-    const start = () => { if (!ori.on) { ori.on = true; window.addEventListener("deviceorientation", onOrientation); } };
-    try {
-      if (typeof DeviceOrientationEvent === "undefined") return;
-      if (typeof DeviceOrientationEvent.requestPermission === "function") DeviceOrientationEvent.requestPermission().then((r) => { if (r === "granted") start(); }).catch(() => {});
-      else start();
-    } catch (e) { /* no motion sensors: the old side views */ }
-  }
-  function onOrientation(e) {
-    if (e.alpha == null || e.beta == null || e.gamma == null) return;
-    const t = performance.now();
-    if (!ori.buf.length && live.on && !st.slots[0].res && !live.check) live.tip = "Appoggia il cubo sul tavolo e non muoverlo più: gira tu attorno con il telefono. Inquadra la faccia davanti";
-    ori.buf.push({ t, o: [e.alpha, e.beta, e.gamma] });
-    if (ori.buf.length > 300) ori.buf.shift();
-    if (live.rec && live.recT0 != null) {
-      const tr = Math.round(t - live.recT0), last = ori.log[ori.log.length - 1];
-      if (!last || tr - last[0] >= 30) ori.log.push([tr, +e.alpha.toFixed(2), +e.beta.toFixed(2), +e.gamma.toFixed(2)]);
-    }
-  }
-  function orientationAt(t) {
-    let best = null;
-    for (let i = ori.buf.length - 1; i >= 0; i--) { const q = ori.buf[i]; if (!best || Math.abs(q.t - t) < Math.abs(best.t - t)) best = q; if (q.t < t - 300) break; }
-    return best && Math.abs(best.t - t) < 150 ? best.o : null;
-  }
-  // ---------- cube still on the table (with the motion sensors) ----------
-  // The cube stays still and the phone goes round it: the phone's orientation says which face the
-  // camera is looking at and how it is turned, without guessing from the measures. The frame of
-  // the cube in the world is set again at every face recognised head-on (a small bump is corrected
-  // there), dropped when the measures clearly disagree (the cube was moved) and while the cube is
-  // turned upside down for «Sotto».
-  const FIXED = true;
-  const fixed = { R: null, flipped: false, flipTo: null, upside: false };
-  const oriM = (o) => {
-    const [a, b, g] = [o[0], o[1], o[2]].map((x) => (x * Math.PI) / 180);
-    const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
-    return [[ca * cg - sa * sb * sg, -sa * cb, ca * sg + sa * sb * cg], [sa * cg + ca * sb * sg, ca * cb, sa * sg - ca * sb * cg], [-cb * sg, sb, cb * cg]];
-  };
-  const mul3 = (A, B) => A.map((row) => [0, 1, 2].map((j) => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
-  const tr3 = (A) => [0, 1, 2].map((i) => [A[0][i], A[1][i], A[2][i]]);
-  // face of box `slot` in front in reading res, turned q (rotateReading(res, q) = unfolded view)
-  function fixCube(slot, q, res) {
-    if (!FIXED || !res || !res.ori || fixed.flipped) return;
-    const f = MirrorVision.photoFrame(SLOTS[slot].face, q), c = Math.cos(res.theta || 0), s = Math.sin(res.theta || 0);
-    const dx = [0, 1, 2].map((i) => c * f.r[i] + s * f.u[i]), dy = [0, 1, 2].map((i) => -s * f.r[i] + c * f.u[i]), dz = f.n;
-    fixed.R = mul3(oriM(res.ori), [[dx[0], dx[1], dx[2]], [dy[0], dy[1], dy[2]], [dz[0], dz[1], dz[2]]]);   // cube -> world
-  }
-  // Which face the camera looks at: { P, q (turn of this reading), deg (from straight on), frame } or null.
-  function faceFromPhone(res) {
-    if (!FIXED || !fixed.R || fixed.flipped || !res || !res.ori) return null;
-    const M = mul3(tr3(fixed.R), oriM(res.ori));        // device axes in the cube frame (columns)
-    const n = [M[0][2], M[1][2], M[2][2]], right = [M[0][0], M[1][0], M[2][0]], up = [M[0][1], M[1][1], M[2][1]];
-    const c = Math.cos(res.theta || 0), s = Math.sin(res.theta || 0);
-    const rr = [0, 1, 2].map((i) => M[i][0] * c - M[i][1] * s);   // right of the reading (grid u axis)
-    const big = (v) => { let k = 0; for (let i = 1; i < 3; i++) if (Math.abs(v[i]) > Math.abs(v[k])) k = i; const a = [0, 0, 0]; a[k] = Math.sign(v[k]) || 1; return a; };
-    const nA = big(n), rA = big(rr.map((x, i) => (nA[i] ? 0 : x)));
-    const uA = [nA[1] * rA[2] - nA[2] * rA[1], nA[2] * rA[0] - nA[0] * rA[2], nA[0] * rA[1] - nA[1] * rA[0]];
-    const ff = MirrorVision.frameFace({ n: nA, r: rA, u: uA });
-    const deg = (Math.acos(Math.min(1, Math.abs(n[0] * nA[0] + n[1] * nA[1] + n[2] * nA[2]))) * 180) / Math.PI;
-    return ff ? { P: ff.P, q: ff.q, deg, frame: { n, r: right, u: up } } : null;
-  }
-  const ringSector = (tf) => Math.floor(((Math.atan2(-tf.b, -tf.a) + 2 * Math.PI + Math.PI / 8) % (2 * Math.PI)) / (Math.PI / 4)) % 8;
-  // full enough: five sides out of eight seen twice, or plenty of views from at least four sides
-  const ringFull = (px) => !!px.ring && (px.ring.filter((n) => n >= 2).length >= 5 || (px.orbit.length >= 14 && px.ring.filter((n) => n >= 1).length >= 4));
-  // With the motion sensors: views all round the face (the ring on the screen), then the height of
-  // every tile from their parallax.
-  function collectOrbit(slot, px, res, now) {
-    // the sensors only see the phone: a view of another face (the cube turned over, or turned by
-    // hand) must not go into this ring. Its measures would tell it apart.
-    if (res.ok && res.ext && MirrorVision.sameFace(res, st.slots[slot].res, 6) > 9) return;
-    if (px.orbitHold) return;              // another face was seen from the front: wait for this one again
-    const tf = MirrorVision.turnFromOrientation(px.front.ori, res.ori, res.theta || 0);
-    if (window.__dbgOrbit) window.__dbgOrbit.push({ t: Math.round(now), f: px.front.ori, o: res.ori, tf, n: px.orbit ? px.orbit.length : 0, ring: px.ring ? px.ring.join("") : "" });
-    if (!tf) return;
-    px.orbit = px.orbit || []; px.ring = px.ring || new Array(8).fill(0);
-    if (tf.deg >= 6 && tf.deg <= 30 && px.orbit.length < 60 && now - (px.lastO || 0) >= 80) {
-      px.orbit.push({ edges: res.edges, a: tf.a, b: tf.b, t: now });
-      px.ring[ringSector(tf)]++;
-      px.lastO = now;
-    }
-    live.ringFor = { slot, t: now };
-    if (!px.orbitDone && ringFull(px)) {
-      px.orbitDone = true;
-      const h = MirrorVision.orbitHeightsGyro(px.front, px.orbit);
-      if (h) st.slots[slot].res.orbit = h;
-      beep(); renderScan();
-      const more = nextOpen(-1) >= 0;
-      toast(`«${SLOTS[slot].name}» completa`);
-      if (live.depthFor && live.depthFor.slot === slot) { live.depthFor = null; if (more) live.tip = `«${SLOTS[slot].name}» completa. ${cap(guideTip(nextOpen(slot)))}`; }
-    }
-    maybeCheck(now);
-  }
-  // The ring round the face while its heights are being measured: a sector fills when the phone
-  // has looked at the face from that side.
-  function drawRing(r, map, scale) {
-    const R = live.ringFor, df = live.depthFor;
-    if (!df || !R || R.slot !== df.slot || performance.now() - R.t > 800 || !r || !r.g) return;
-    const px = st.slots[df.slot].res && st.slots[df.slot].res.plx;
-    if (!px || !px.ring) return;
-    const q = MirrorVision.toImage(r, 0.5 * (r.g[0] + r.g[1]), 0.5 * (r.h[0] + r.h[1]));
-    const [x, y] = map(q[0], q[1]);
-    const rad = 1.8 * (r.m || 40) * scale;
-    ctx.save(); ctx.translate(x, y); ctx.rotate(r.theta || 0); ctx.lineCap = "round"; ctx.lineWidth = Math.max(5 * dpr, 0.1 * rad);
-    for (let k = 0; k < 8; k++) {
-      const n = px.ring[k];
-      ctx.strokeStyle = n >= 2 ? "rgba(52,199,89,.95)" : n === 1 ? "rgba(52,199,89,.5)" : "rgba(255,255,255,.4)";
-      ctx.beginPath(); ctx.arc(0, 0, rad, (k - 0.5) * (Math.PI / 4) + 0.07, (k + 0.5) * (Math.PI / 4) - 0.07); ctx.stroke();
-    }
-    ctx.restore();
-  }
   const TRK_MAX_MS = 15000;
   const MOVE_TXT = { left: "girato il cubo verso sinistra", right: "girato il cubo verso destra", down: "inclinato il cubo verso di te", up: "inclinato il cubo lontano da te" };
   function moveText(steps) {
     if (steps.length === 1) return MOVE_TXT[steps[0]];
     if (steps.length === 2 && steps[0] === steps[1]) return steps[0] === "left" || steps[0] === "right" ? "girato il cubo di mezzo giro" : "capovolto il cubo";
     return steps.map((d, i) => (i ? MOVE_TXT[d].replace("il cubo ", "") : MOVE_TXT[d])).join(" e poi ");
-  }
-  // ---------- guided order (30 September) ----------
-  // The page asks for the faces one by one and says how to turn the cube to bring the next
-  // one in front, from the face in front now; the face that arrives is the one asked for. The
-  // movement only checks that the cube went the right way (on a scrambled cube it is too rough
-  // to name faces by itself). Before: free rotation, faces named from their measures, and the
-  // same face could end up in two boxes.
-  const GUIDED = true;
-  const DIRTXT = { left: "gira il cubo verso sinistra", right: "gira il cubo verso destra", down: "inclina il cubo verso di te", up: "inclina il cubo lontano da te" };
-  const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
-  // How to bring the face of box `slot` in front, from the face in front now: a quarter turn
-  // for a neighbour, half a turn for the opposite face (turned upside down for top and bottom).
-  const PHONETXT = { left: "sposta il telefono verso destra, girando attorno al cubo", right: "sposta il telefono verso sinistra, girando attorno al cubo", down: "alza il telefono e guarda il cubo dall'alto", up: "abbassa il telefono e guarda il cubo dal basso" };
-  const FLIPTXT = "capovolgi il cubo sul tavolo, così la faccia di sotto va sopra, e guardalo dall'alto";
-  const FLIPBACK = "rigira il cubo com'era all'inizio e guardalo dall'alto";
-  const phoneMode = () => FIXED && ori.on && ori.buf.length > 0;
-  function pathTo(slot) {
-    const A = trk.anchor;
-    if (!A || slot < 0) return null;
-    const want = SLOTS[slot].face, pm = phoneMode();
-    if (SLOTS[A.slot].face === want) return { steps: [], text: "" };
-    const fr = MirrorVision.photoFrame(SLOTS[A.slot].face, A.q);
-    for (const d of ["left", "right", "down", "up"]) {
-      const f = MirrorVision.frameFace(MirrorVision.turnFrame(fr, d));
-      // on the table the face underneath can only be reached by turning the cube over
-      const under = pm && want === (fixed.upside ? "U" : "D");
-      if (f && f.P === want) return { steps: [d], text: pm ? (under ? (fixed.upside ? FLIPBACK : FLIPTXT) : PHONETXT[d]) : DIRTXT[d], flip: under };
-    }
-    if (pm) return want === (fixed.upside ? "U" : "D") ? { steps: ["up", "up"], text: fixed.upside ? FLIPBACK : FLIPTXT, flip: true } : { steps: ["left", "left"], text: "gira attorno al cubo fino al lato opposto" };
-    return want === "U" || want === "D" ? { steps: ["up", "up"], text: "capovolgi il cubo, inclinandolo due volte lontano da te" } : { steps: ["left", "left"], text: "gira il cubo di mezzo giro" };
-  }
-  function guideTip(slot) {
-    if (slot < 0) return "continua a ruotare piano";
-    const pth = pathTo(slot);
-    // turned upside down for the bottom face: the sensors no longer know where the cube is
-    if (pth && pth.flip) { fixed.flipped = true; fixed.flipTo = SLOTS[slot].face; }
-    if (!pth) return `mostrami «${SLOTS[slot].name}»`;
-    if (!pth.steps.length) return `tieni ferma «${SLOTS[slot].name}»`;
-    return `${pth.text}: ora «${SLOTS[slot].name}»`;
-  }
-  // Turn of the face of box `slot` reached with pathTo from the anchor (the movement's turn when
-  // the movement reached the same face).
-  function guidedTurn(slot, tp) {
-    if (tp && tp.slot === slot) return tp.turn;
-    const A = trk.anchor, pth = pathTo(slot);
-    if (!A || !pth || !pth.steps.length) return null;
-    let fr = MirrorVision.photoFrame(SLOTS[A.slot].face, A.q);
-    for (const d of pth.steps) fr = MirrorVision.turnFrame(fr, d);
-    const ff = MirrorVision.frameFace(fr);
-    return ff && ff.P === SLOTS[slot].face ? ff.q : null;
   }
   // A real cube: nine stickers per colour, every piece once, twists and flips that add up and
   // the same parity for corners and edges (the solver fails on anything else).
@@ -4886,7 +4608,6 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   }
   function trkReset() {
     trk.anchor = null; trk.seq = []; trk.front = []; live.guess = null;
-    if (typeof fixed !== "undefined") Object.assign(fixed, { R: null, flipped: false, flipTo: null, upside: false });
     Object.assign(twin, { inView: null, chain: null, frame: null, pred: null, tilt: [0, 0] });
   }
   // ---------- the cube in front of the camera: twin model and face label ----------
@@ -4936,6 +4657,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   // The name of the face in front: white when sure, yellow with "?" when provisional or only
   // suggested by the movement, red when the face must be read again.
   function faceLabel(r) {
+    if (live.pending) return { text: `${SLOTS[live.pending.slot].name}? Tocca qui`, col: "#F2C94C", pending: true };
     const iv = twin.inView;
     if (iv && st.slots[iv.slot] && st.slots[iv.slot].res) {
       const sl = st.slots[iv.slot];
@@ -4944,12 +4666,73 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     // a new face only once it is in front and being read (not the grids of a turn)
     if (live.cand && live.cand.reads && live.cand.reads.includes(r)) {
       const g = live.guess && performance.now() - live.guess.t < 1500 && !st.slots[live.guess.slot].res ? live.guess : null;
-      if (GUIDED && st.cur >= 0 && !st.slots[st.cur].res) return { text: SLOTS[st.cur].name + "?", col: "#F2C94C" };
       return g ? { text: SLOTS[g.slot].name + "?", col: "#F2C94C" } : { text: "Faccia nuova", col: "#FFFFFF" };
     }
     return null;
   }
-  const lab = { x: 0, y: 0, a: 0, size: 0, alpha: 0, text: "", col: "" };
+  const lab = { x: 0, y: 0, a: 0, size: 0, alpha: 0, text: "", col: "", box: null, change: null };
+  // ---------- the user confirms the name of a new face ----------
+  // A new face read from the front does not go in a box by itself: the name the page proposes
+  // appears on the face and a tap on it confirms it («Cambia» to pick another face). Names decided
+  // by the page alone were often wrong on a scrambled cube (real scans of 29 and 30 September).
+  const CONFIRM = true;
+  function proposeFor(c) {   // dry run of confirmLive: the box the page would choose
+    const own = c.reads.filter((r) => !r.aligned);
+    const lastRes = (own.length ? own : c.reads).slice().sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
+    const final = Object.assign({}, lastRes, mergeReadings(c.reads), { ok: true, missing: lastRes.missing || 0 });
+    const tp = st.slots[0].res ? trkPredict(c, final) : null;
+    return chooseSlot(final, st.cur, tp);
+  }
+  function offerConfirm(c, job, res, now) {
+    const slot = st.slots[0].res ? proposeFor(c) : 0;
+    live.pending = { c, job, res, slot, t: now };
+    live.tip = `Questa è «${SLOTS[slot].name}»? Tocca il nome sulla faccia per confermarlo, oppure «Cambia»`;
+  }
+  function confirmPending(j) {
+    const p = live.pending;
+    if (!p) return;
+    live.pending = null; closeChooser();
+    st.cur = j; live.last = p.res;
+    const done = confirmLive(p.c, p.job, { slot: j });
+    live.recent = []; live.waitTurn = { slot: done, seen: performance.now() };
+  }
+  const freeSlots = () => SLOTS.map((x, j) => j).filter((j) => !st.slots[j].res || (st.flagged && st.flagged.has(j)));
+  let chooser = null;
+  function openChooser() {
+    if (!live.pending) return;
+    closeChooser();
+    chooser = document.createElement("div");
+    chooser.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:60;background:rgba(10,14,22,.96);padding:14px 14px calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;gap:8px;justify-content:center";
+    const title = document.createElement("div");
+    title.textContent = "Che faccia è?"; title.style.cssText = "width:100%;text-align:center;color:#fff;font-weight:600;margin-bottom:4px";
+    chooser.append(title);
+    for (const j of freeSlots()) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = SLOTS[j].name;
+      b.addEventListener("click", (e) => { e.stopPropagation(); confirmPending(j); });
+      chooser.append(b);
+    }
+    const no = document.createElement("button"); no.type = "button"; no.className = "btn"; no.textContent = "Annulla";
+    no.addEventListener("click", (e) => { e.stopPropagation(); closeChooser(); });
+    chooser.append(no);
+    document.body.append(chooser);
+  }
+  function closeChooser() { if (chooser) { chooser.remove(); chooser = null; } }
+  // taps on the live picture: on the name to confirm it, on «Cambia» to choose another face
+  stage.addEventListener("pointerup", (e) => {
+    if (!live.on || !live.pending || !lab.box) return;
+    const r = stage.getBoundingClientRect(), x = ((e.clientX - r.left) * stage.width) / r.width, y = ((e.clientY - r.top) * stage.height) / r.height;
+    const inside = (b) => b && x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
+    if (inside(lab.box)) confirmPending(live.pending.slot);
+    else if (inside(lab.change)) openChooser();
+  });
+  // turn of the face of box j for reading r, from the corners shared with the faces already in
+  function bestTurn(j, r) {
+    if (j === 0) return 0;
+    const placed = {};
+    st.slots.forEach((x) => { if (x.res && x.res.ok) placed[x.face] = x.frameRes || x.res; });
+    const all = MirrorVision.placeFace(placed, r).filter((q) => q.P === SLOTS[j].face && q.c != null && q.n > 0).sort((a, b) => a.c - b.c);
+    return all.length ? all[0].k : 0;
+  }
   function drawFaceLabel(r, map, scale) {
     const L = r ? faceLabel(r) : null;
     if (L && r && r.g && r.h) {
@@ -4972,6 +4755,16 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fill();
     ctx.fillStyle = lab.col; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(lab.text, 0, lab.size * 0.06);
+    lab.box = null; lab.change = null;
+    if (live.pending) {
+      // «Cambia» under the name; tap areas a little larger than what is drawn
+      const cy = hh * 1.15, cw = ctx.measureText("Cambia").width + 2 * pad, chh = hh * 0.9;
+      ctx.beginPath(); ctx.rect(-cw / 2, cy - chh / 2, cw, chh); ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fill();
+      ctx.fillStyle = "#FFFFFF"; ctx.fillText("Cambia", 0, cy + lab.size * 0.06);
+      const m = 14 * dpr;
+      lab.box = [lab.x - ww / 2 - m, lab.y - hh / 2 - m, lab.x + ww / 2 + m, lab.y + hh / 2 + 4];
+      lab.change = [lab.x - cw / 2 - m, lab.y + cy - chh / 2 + 4, lab.x + cw / 2 + m, lab.y + cy + chh / 2 + m];
+    }
     ctx.restore();
   }
   function trkEntry(res, job, now) {
@@ -4987,20 +4780,6 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const e = trkEntry(res, job, now);
     trk.seq.push(e);
     twinFollow(e);
-    const gp = faceFromPhone(res);
-    if (gp) {
-      twin.frame = gp.frame; twin.pred = null; twin.tilt = [0, 0];
-      const jj = SLOTS.findIndex((x) => x.face === gp.P);
-      twin.inView = gp.deg < 35 && jj >= 0 && st.slots[jj].res ? { slot: jj, t: now } : null;
-    }
-    // still the face of the anchor, seen from the front again (it never left the picture): the
-    // movement starts again from here, however long you stay on it and however its measures change
-    const s0 = trk.seq[0];
-    if (twin.inView && twin.inView.slot === trk.anchor.slot && e.res && e.asp >= 0.97 && e.asp <= 1.03 && (e.span == null || e.span >= 2.3)
-      && typeof e.th === "number" && typeof s0.th === "number" && Math.abs(e.th - s0.th) < 0.5 && trk.seq.length > 1) {
-      trk.seq = [e]; trk.anchor.t = now;
-      trk.front.push(e); if (trk.front.length > 8) trk.front.shift();
-    }
     if (trk.seq.length > 600) trkReset();              // wandering for too long: the chain is lost
   }
   // The quarter turns that bring reading b onto reading a: alignTo when the measures agree
@@ -5025,15 +4804,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (k < 0) return;
     const e = trkEntry(res, job, now);
     if (window.__trkChecks && trk.anchor && trk.anchor.slot !== slot) trkSelfCheck(slot, (k + (sl.turn || 0)) % 4, e, now);
-    if (!trk.anchor || trk.anchor.slot !== slot) { trk.front = []; trk.blocked = 0; trk.refused = 0; }
+    if (!trk.anchor || trk.anchor.slot !== slot) { trk.front = []; trk.blocked = 0; }
     trk.front.push(e);
     if (trk.front.length > 8) trk.front.shift();
     trk.anchor = { slot, q: (k + (sl.turn || 0)) % 4, t: now };
     trk.seq = [e];
-    if (sl.res && sl.res.plx) sl.res.plx.orbitHold = false;           // back on this face
-    // the face asked for after turning the cube over: the sensors know where the cube is again
-    if (fixed.flipped && SLOTS[slot].face === fixed.flipTo) { fixed.flipped = false; fixed.upside = fixed.flipTo === "D"; fixed.flipTo = null; }
-    fixCube(slot, trk.anchor.q, res);
     twinSet(slot, trk.anchor.q, e, now);
   }
   // Test harness only (window.__trkChecks): a face seen before comes back in front, so its box
@@ -5094,7 +4869,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   // guess), by position in the list of boxes, with their turn.
   // Not used yet (TRACK_HINT false): on scrambled cubes the movement is not reliable enough, and
   // the free search alone decoded the synthetic scans without errors.
-  const TRACK_HINT = GUIDED;
+  const TRACK_HINT = false;
   function trackedLayout() {
     if (!TRACK_HINT) return null;
     const placed = {}, turned = {};
@@ -5345,8 +5120,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (!live.on || !job || (!live.check && st.cur < 0)) return;
     const now = performance.now(), v = live.video;
     res.job = job;
-    res.ori = ori.on ? orientationAt(job.t) : null;
     if (live.check) { handleCheck(res, now); return; }
+    if (live.pending && now - live.pending.t > 12000) { live.pending = null; closeChooser(); }
     trkAdd(res, job, now);
     // the depth of a face that does not come (reflections, a hand in the way) is measured later
     if (live.depthFor && now - live.depthFor.t0 > 12000) { toast(`Passa pure alla faccia successiva: la profondità di «${SLOTS[live.depthFor.slot].name}» la misuro dopo`); live.depthFor = null; }
@@ -5397,18 +5172,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const sq = Math.abs((res.g[1] - res.g[0]) - (res.h[1] - res.h[0])) / res.m;
       const fl = Object.values(res.edges || {}).map((b) => b.n / Math.max(1, (b.u1 - b.u0 + 1) * (b.v1 - b.v0 + 1))).sort((a, b) => a - b);
       const oblique = fl.length < 5 || fl[fl.length >> 1] < 0.8 || fl[0] < 0.7;
-      // With the motion sensors the turn is known: while a face is being measured, a view turned
-      // from its frontal pose is a side view whatever the picture says (on a scrambled face the
-      // picture often misses the turn, and the view went to the vote as a new face)
-      const dfx = live.depthFor && st.slots[live.depthFor.slot].res && st.slots[live.depthFor.slot].res.plx;
-      const gt = dfx && dfx.front && dfx.front.ori && res.ori ? MirrorVision.turnFromOrientation(dfx.front.ori, res.ori, res.theta || 0) : null;
-      if (gt && gt.deg >= 6 && gt.deg <= 35) { tilted = true; collectTurned(res, now); msg = "così: continua il giro attorno alla faccia"; bad = true; }
-      else if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12 || oblique) { tilted = true; collectTurned(res, now); msg = live.depthFor ? (ori.on && res.ori ? "così: continua il giro attorno alla faccia" : "così, inclinalo anche nelle altre direzioni: in su, in giù, a destra e a sinistra") : "continua a ruotare piano"; bad = true; }
+      if (!ks.length || Math.max(...ks) > 0.022 || sq > 0.12 || oblique) { tilted = true; collectTurned(res, now); msg = live.depthFor ? "così, inclinalo anche nelle altre direzioni: in su, in giù, a destra e a sinistra" : "continua a ruotare piano"; bad = true; }
     }
     // 2) after a confirmation, wait until the cube has really been turned
     if (live.waitTurn && whole) {
       const prev = st.slots[live.waitTurn.slot].res;
-      if (alignTo(prev, res) >= 0) { live.waitTurn.seen = now; if (!tilted && !msg) trkAnchor(live.waitTurn.slot, res, job, now); if (!msg) msg = live.depthFor ? (phoneMode() ? "muovi il telefono in un piccolo cerchio attorno alla faccia" : "ora inclina un po' il cubo, circa 20 gradi: in su, in giù, a destra e a sinistra") : (GUIDED ? `girato? ${cap(guideTip(st.cur))}` : "girato? Mostrami la faccia successiva"); bad = true; }
+      if (alignTo(prev, res) >= 0) { live.waitTurn.seen = now; if (!tilted && !msg) trkAnchor(live.waitTurn.slot, res, job, now); if (!msg) msg = live.depthFor ? "ora inclina un po' il cubo, circa 20 gradi: in su, in giù, a destra e a sinistra" : "girato? Mostrami la faccia successiva"; bad = true; }
       else live.waitTurn = null;
     } else if (live.waitTurn && now - live.waitTurn.seen > 250) live.waitTurn = null;
     if (res.ok && !msg) {
@@ -5416,7 +5185,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (twin >= 0) {
         live.lastFace = { slot: twin, t: now };
         trkAnchor(twin, res, job, now);
-        if (!(st.flagged && st.flagged.has(twin))) { collectTurned(res, now); msg = `«${SLOTS[twin].name}» l'ho già vista. ${cap(guideTip(nextOpen(-1) >= 0 ? st.cur : -1))}`; bad = true; }
+        if (!(st.flagged && st.flagged.has(twin))) { collectTurned(res, now); msg = `«${SLOTS[twin].name}» l'ho già vista: continua a ruotare`; bad = true; }
         else if (st.cur !== twin) { st.cur = twin; live.recent = []; }
       }
     }
@@ -5449,25 +5218,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       if (c.frac >= 1 && consistent(reads)) {
         const twin = already(c.merged, 5);
         if (twin >= 0) { live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: twin, t: now }; trkAnchor(twin, res, job, now); return; }
-        if (live.depthFor) {
-          // the camera sees another face from the front: the views of the ring since it appeared are
-          // not of this face (the cube turned over, or turned by hand); none until this face is back
-          const pxd = st.slots[live.depthFor.slot].res && st.slots[live.depthFor.slot].res.plx;
-          if (pxd && pxd.orbit && !pxd.orbitDone) {
-            pxd.orbit = pxd.orbit.filter((v) => v.t < c.t0);
-            pxd.ring = new Array(8).fill(0);
-            for (const v of pxd.orbit) pxd.ring[ringSector(v)]++;
-            pxd.orbitHold = true;
-          }
-          live.recent = []; live.cand = null; live.last = res;
-          live.tip = `Prima finisco «${SLOTS[live.depthFor.slot].name}»: torna su quella faccia${phoneMode() ? " e muovi il telefono attorno" : " e inclinala un po'"}`;
-          return;
-        }
+        if (live.depthFor) { live.recent = []; live.cand = null; live.last = res; live.tip = `Prima finisco «${SLOTS[live.depthFor.slot].name}»: torna su quella faccia e inclinala un po'`; return; }
         // The cube has not been turned since a face already in (the views move on without the
         // jump of a change of face): it is that face again, read with other measures. Real
         // scrambled scan of 29 September: two boxes got the same face this way, twice.
         const A = trk.anchor;
-        if (A && st.slots[A.slot].res && !(st.flagged && st.flagged.has(A.slot)) && c.t0 - trk.seq[0].t < TRK_MAX_MS && (trk.blocked || 0) < 40) {
+        if (A && st.slots[A.slot].res && !(st.flagged && st.flagged.has(A.slot)) && c.t0 - trk.seq[0].t < 6000 && (trk.blocked || 0) < 3) {
           // (while the votes were being gathered, some readings of this face were even taken for
           // that face: the anchor was renewed inside the window of the vote)
           const renewed = trk.seq[0].t >= c.t0 && trk.seq[0].res && trkSame(trk.seq[0].res, c.merged) !== false && (alignTo(trk.seq[0].res, c.merged) >= 0 || nearlyAll(trk.seq[0].res, c.merged) || MirrorVision.sameFace(trk.seq[0].res, c.merged, 6) < 3.5);
@@ -5475,35 +5231,22 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
           // on smoothly up to this reading
           const fm = renewed ? { same: true } : trkFollow(trk.seq[0].t >= c.t0 ? now : c.t0);
           if (fm && fm.same) {
-            trk.blocked = (trk.blocked || 0) + 1;              // a safety limit, far above normal use
+            trk.blocked = (trk.blocked || 0) + 1;              // never more than 3 times on one face
             live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: A.slot, t: now };
-            live.tip = `«${SLOTS[A.slot].name}» l'ho già vista. ${cap(guideTip(nextOpen(-1) >= 0 ? st.cur : -1))}`;
+            live.tip = `«${SLOTS[A.slot].name}» l'ho già vista: continua a ruotare`;
             return;
-          }
-        }
-        if (FIXED && res.ori && fixed.R && !fixed.flipped) {
-          const g = faceFromPhone(res), j = g && g.deg < 25 ? SLOTS.findIndex((x) => x.face === g.P) : -1;
-          if (j >= 0 && st.slots[j].res && !(st.flagged && st.flagged.has(j))) {
-            if (MirrorVision.sameFace(st.slots[j].res, c.merged, 6) < 6) {
-              live.recent = []; live.cand = null; live.last = res; live.lastFace = { slot: j, t: now };
-              live.tip = `«${SLOTS[j].name}» l'ho già vista. ${cap(guideTip(nextOpen(-1) >= 0 ? st.cur : -1))}`;
-              return;
-            }
-            fixed.R = null;               // the measures say another face: the cube was moved
           }
         }
         const to = boxForNew(slot);
-        if (GUIDED && to > 0 && st.slots[0].res && trk.anchor && (trk.refused || 0) < 2 && !(st.flagged && st.flagged.has(to))) {
-          const pg = trkPredict(c, c.merged), back = trk.anchor.slot, pth = pathTo(to);
-          if (pg && pg.conf >= 2 && pg.slot !== to && pth && pth.steps.length) {
-            trk.refused = (trk.refused || 0) + 1;
-            live.recent = []; live.cand = null; live.last = res;
-            live.tip = `Mi sembra che tu abbia ${moveText(pg.steps)}: torna su «${SLOTS[back].name}» e ${pth.text}`;
-            return;
-          }
-        }
         if (to < 0) { live.recent = []; live.cand = null; live.last = res; return; }
         st.cur = to;
+        if (CONFIRM && window.__autoConfirm !== true) {
+          if (!live.pending) offerConfirm(c, job, res, now);
+          live.recent = []; live.last = res;
+          // test bench: someone who taps the right name (or the proposal)
+          if (typeof window.__autoConfirm === "function") confirmPending(window.__autoConfirm(live.pending.slot, SLOTS.map((x) => x.face), freeSlots()));
+          return;
+        }
         live.last = res; const done = confirmLive(c, job); live.recent = [];
         live.waitTurn = { slot: done, seen: now };   // the box that really got the face
         return;
@@ -5526,7 +5269,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (!sl || !sl.res || !sl.res.ok) return "none";
     if (st.flagged && st.flagged.has(k)) return "bad";
     const px = sl.res.plx;
-    return !px || !px.front || px.turned.length >= 2 ? "done" : "front";
+    return !px || !px.front || px.depthDone ? "done" : "front";
   }
   function tileStatus(k, nm) {
     if (k < 0) return "new";
@@ -5577,8 +5320,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   // Arrows toward the side views this face still needs.
   function drawArrows(r, map, k) {
     const px = k >= 0 && st.slots[k].res && st.slots[k].res.plx;
-    if (!px || !px.front || px.turned.length >= 4) return;
-    const have = px.dirs || new Set(), [g1, g2] = r.g, [h1, h2] = r.h, m = g2 - g1, cu = 0.5 * (g1 + g2), cv = 0.5 * (h1 + h2);
+    if (!px || !px.front || px.depthDone) return;
+    const have = new Set(px.dirs || []);
+    if (px.axes && px.axes.u >= 2) { have.add("left"); have.add("right"); }
+    if (px.axes && px.axes.v >= 2) { have.add("up"); have.add("down"); }
+    const _h = have, [g1, g2] = r.g, [h1, h2] = r.h, m = g2 - g1, cu = 0.5 * (g1 + g2), cv = 0.5 * (h1 + h2);
     const spots = { right: [g2 + 1.35 * m, cv, 1, 0], left: [g1 - 1.35 * m, cv, -1, 0], down: [cu, h2 + 1.35 * m, 0, 1], up: [cu, h1 - 1.35 * m, 0, -1] };
     ctx.save(); ctx.fillStyle = "#F2C94C"; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.lineWidth = 2 * dpr;
     for (const d in spots) {
@@ -5625,7 +5371,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const good = !live.turnPh && r.ok && live.cand && live.cand.reads.includes(r);
       if (!live.turnPh) drawReading(r, map, !good);
       if (good) { drawMissing(r, map, live.cand.cov && live.cand.cov.missing); drawProgress(r, map, live.cand.frac || 0); }
-      if (!live.check) { drawRing(r, map, s / j.k); drawFaceLabel(r, map, s / j.k); }
+      if (!live.check) drawFaceLabel(r, map, s / j.k);
     } else if (!live.check) drawFaceLabel(null);
     if (!live.check) drawMiniMap();
     const tip = $("#liveTip");
@@ -5647,7 +5393,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     ctx.restore();
   }
 
-  function chooseSlot(r, fallback, tp, gy) {
+  function chooseSlot(r, fallback, tp) {
     if (!st.slots[0].res || (st.flagged && st.flagged.has(fallback))) return fallback;
     const placed = {};
     st.slots.forEach((x, j) => { if (x.res && x.res.ok) placed[SLOTS[j].face] = x.frameRes || x.res; });
@@ -5668,18 +5414,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const tpC = tpF ? all.find((q) => q.P === tpF && q.k === tp.turn) : null;
     const veto = false;
     let src = "guess";
-    const gyj = gy ? SLOTS.findIndex((x) => x.face === gy.P) : -1;
     if (ns && ns.v < 4 && ns.gap > 1.2 && !placed[ns.P]) { P = ns.P; k = (4 - ns.k) % 4; src = "model"; }
-    else if (gy && gyj > 0 && !st.slots[gyj].res) { P = gy.P; k = gy.k; src = "gyro"; }
     else if (best && best.c < 6 && (!second || second.c > best.c + 4)) { P = best.P; k = best.k; src = "corners"; }
-    else if (GUIDED && fallback > 0 && !st.slots[fallback].res) {
-      // guided order: it is the face asked for; its turn from the corners when they are clear
-      // among its four turns, otherwise from the way the cube was turned to reach it
-      P = SLOTS[fallback].face; src = "guided";
-      const mine = all.filter((q) => q.P === P && q.c != null).sort((a, b) => a.c - b.c);
-      const gt = guidedTurn(fallback, tp);
-      k = mine.length && mine[0].c < 6 && (mine.length < 2 || mine[1].c > mine[0].c + 4) ? mine[0].k : gt != null ? gt : 0;
-    }
     else if (tpF && tp.conf >= 2) { P = tpF; k = tp.turn; src = "track"; }
     else if (Object.keys(placed).length >= 3) {
       const free0 = ["R", "B", "L", "U", "D"].filter((F) => !placed[F] && !all.some((q) => q.P === F && q.n > 0));
@@ -5693,7 +5429,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     r.__why = { best: best ? { P: best.P, k: best.k, c: +best.c.toFixed(2) } : null, second: second ? { P: second.P, c: +second.c.toFixed(2) } : null, track: tpC && tpC.c != null ? +tpC.c.toFixed(2) : null, veto: !!veto };
     return slot;
   }
-  function confirmLive(c, job) {
+  function confirmLive(c, job, forced) {
     let slot = st.cur;
     const own = c.reads.filter((r) => !r.aligned);
     const lastRes = (own.length ? own : c.reads).slice().sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
@@ -5702,46 +5438,48 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     delete final.job;
     const canvas = lastRes.job ? lastRes.job.crop : job.crop;
     const tp = st.slots[0].res ? trkPredict(c, final) : null;
-    const gr = st.slots[0].res ? faceFromPhone(lastRes) : null;
-    const gy = gr && gr.deg < 30 ? { P: gr.P, k: (((gr.q - Math.max(0, turnOnto(final, lastRes))) % 4) + 4) % 4 } : null;
-    slot = chooseSlot(final, slot, tp, gy);
+    slot = chooseSlot(final, slot, tp);
+    if (forced) {
+      // the name the user confirmed (or picked): its turn from the shared corners when it differs
+      if (forced.slot !== slot) { final.__rot = bestTurn(forced.slot, final); slot = forced.slot; }
+      final.__guess = false; final.__src = "user";
+    }
     const src = final.__src || "guess", why = final.__why || null;
     // a place found from the movement alone stays provisional (the turned views of a scrambled
     // face are rough): the final check can still rename it
     const guess = (!!final.__guess || src === "track") && !(st.flagged && st.flagged.has(slot));
     delete final.aligned; delete final.__guess; delete final.__src; delete final.__why;
     Object.assign(st.slots[slot], { c: canvas, res: final, thumb: thumbOf(canvas, final), warn: false, guess, src, pred: tp ? { slot: tp.slot, turn: tp.turn, steps: tp.steps, conf: tp.conf } : null, why, t: performance.now(), turn: final.__rot || 0, frameRes: MirrorVision.rotateReading(final, final.__rot || 0) });
-    live.cand = null; live.guess = null; trk.refused = 0;
+    live.cand = null; live.guess = null;
     beep(); flash();
     const fr = c.reads.filter((r) => !r.aligned && r.edges && r.edges.C).sort((a, b) => (a.missing || 0) - (b.missing || 0))[0];
     renderScan();
-    st.slots[slot].res.plx = { front: fr ? { res: { g: fr.g, h: fr.h }, edges: fr.edges, ori: fr.ori || null } : null, turned: [] };
+    st.slots[slot].res.plx = { front: fr ? { res: { g: fr.g, h: fr.h }, edges: fr.edges } : null, turned: [] };
     if (st.flagged) st.flagged.delete(slot);
     live.lastFace = { slot, t: performance.now() };
     const nDone = st.slots.filter((x) => x.res && x.res.ok).length;
     // say how the face was recognised when it came from the movement (it is also a check for
     // the user: a wrong direction is easy to spot)
     const moved = tp && tp.slot === slot;
-    toast(src === "guided" || src === "gyro" ? `Ecco «${SLOTS[slot].name}»` : moved && src === "track" ? `Hai ${moveText(tp.steps)}: dovrebbe essere «${SLOTS[slot].name}»`
+    toast(src === "user" ? `«${SLOTS[slot].name}» confermata` : moved && src === "track" ? `Hai ${moveText(tp.steps)}: dovrebbe essere «${SLOTS[slot].name}»`
       : guess ? `Faccia vista: ${nDone} di 6`
       : moved ? `Hai ${moveText(tp.steps)}: questa è «${SLOTS[slot].name}»` : `Faccia vista: ${SLOTS[slot].name}`);
     if (live.last && live.last.job) trkAnchor(slot, live.last, live.last.job, performance.now());
     live.depthFor = st.calib ? null : { slot, t0: performance.now() };
     advanceLive(slot);
-    if (live.depthFor) live.tip = ori.on && fr && fr.ori ? `Ora muovi piano il telefono in un piccolo cerchio attorno a «${SLOTS[slot].name}», senza toccare il cubo: riempi l'anello`
-      : `Ora inclina un po' il cubo, in su, in giù, a destra e a sinistra: misuro la profondità di «${SLOTS[slot].name}»`;
+    if (live.depthFor) live.tip = `Ora inclina un po' il cubo, in su, in giù, a destra e a sinistra: misuro la profondità di «${SLOTS[slot].name}»`;
     return slot;
   }
   // Turned views of the face that was just in front of the camera: they give the parallax.
+  // The depth of a face is measured from views turned both ways: at least two turned left or
+  // right and two turned up or down (before: any two views), or eight views in all. Which way
+  // each one turns does not matter (the picture alone gets the side wrong on a scrambled cube).
+  const depthDone = (px) => !!px && (px.turned.length >= 8 || (!!px.axes && px.axes.u >= 2 && px.axes.v >= 2));
   function collectTurned(res, now) {
     const lf = live.lastFace;
-    // with the motion sensors: the face in view is the one the views move on from without a jump
-    const inView = live.depthFor ? live.depthFor.slot : twin.inView ? twin.inView.slot : lf && now - lf.t <= 2500 ? lf.slot : -1;
-    const pxi = inView >= 0 && st.slots[inView].res && st.slots[inView].res.plx;
-    if (pxi && pxi.front && pxi.front.ori && res.ori && res.g && res.edges && res.edges.C) { collectOrbit(inView, pxi, res, now); return; }
     if (!lf || now - lf.t > 2500 || !res.g || !res.edges || !res.edges.C) return;
     const sl = st.slots[lf.slot], px = sl.res && sl.res.plx;
-    if (!px || !px.front || px.turned.length >= 8 || now - (px.lastT || 0) < 200) return;
+    if (!px || !px.front || px.turned.length >= 12 || now - (px.lastT || 0) < 150) return;
     const pv = MirrorVision.parallaxView(px.front, { res: { g: res.g, h: res.h }, edges: res.edges });
     if (!pv) return;
     const deg = (Math.acos(Math.max(-1, Math.min(1, pv.cosEst))) * 180) / Math.PI;
@@ -5755,11 +5493,14 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (dir) px.dirs.add(dir);
     px.turned.push({ res: { g: res.g, h: res.h }, edges: res.edges });
     px.lastT = now;
-    if (px.turned.length === 2) {
+    px.axes = px.axes || { u: 0, v: 0 };
+    px.axes[pv.axis]++;
+    if (!px.depthDone && depthDone(px)) {
+      px.depthDone = true;
       beep(); renderScan();
       const more = nextOpen(-1) >= 0;
       toast(`«${SLOTS[lf.slot].name}» completa${more ? ": passa alla faccia successiva" : ""}`);
-      if (live.depthFor && live.depthFor.slot === lf.slot) { live.depthFor = null; if (more) live.tip = GUIDED ? `«${SLOTS[lf.slot].name}» completa. ${cap(guideTip(nextOpen(lf.slot)))}` : `«${SLOTS[lf.slot].name}» completa: ora passa alla faccia successiva`; }
+      if (live.depthFor && live.depthFor.slot === lf.slot) { live.depthFor = null; if (more) live.tip = `«${SLOTS[lf.slot].name}» completa: ora passa alla faccia successiva`; }
     }
     maybeCheck(now);
   }
@@ -5767,7 +5508,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   function maybeCheck(now) {
     if (nextOpen(-1) >= 0) return;
     if (st.calib) { finishCalibration(); return; }
-    const ready = st.slots.every((x) => x.res && x.res.plx && (x.res.plx.orbitDone || x.res.plx.turned.length >= 2 || !x.res.plx.front));
+    const ready = st.slots.every((x) => x.res && x.res.plx && (x.res.plx.depthDone || !x.res.plx.front));
     st.allSince = st.allSince || now;
     if ((ready || now - st.allSince > 15000) && !(st.flagged && st.flagged.size)) liveCheck();
   }
@@ -5827,7 +5568,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     st.cur = nextOpen(slot);
     renderScan();
     if (st.cur < 0) { if (st.calib) { finishCalibration(); return; } st.cur = st.flagged && st.flagged.size ? [...st.flagged][0] : 0; maybeCheck(performance.now()); }
-    live.tip = nextOpen(-1) >= 0 ? (GUIDED ? cap(guideTip(st.cur)) : "Continua a ruotare piano il cubo: mostrami le facce che mancano, anche un po' di lato")
+    live.tip = nextOpen(-1) >= 0 ? "Continua a ruotare piano il cubo: mostrami le facce che mancano, anche un po' di lato"
       : "Ho tutte le facce: continua a ruotare piano, raccolgo le viste di lato";
   }
   function handleTurn(res, now) {
@@ -5850,7 +5591,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     T.frac = Math.min(1, T.views.length / 4);
     const el2 = now - T.t0;
     if ((T.views.length >= 4 && T.axes.u && T.axes.v) || (T.views.length >= 3 && el2 > 7000) || el2 > 12000) {
-      st.slots[T.slot].res.plx = { front: T.front, turned: T.views };
+      st.slots[T.slot].res.plx = { front: T.front, turned: T.views, depthDone: T.views.length >= 2 };
       live.turnPh = null;
       toast(T.views.length ? `${SLOTS[T.slot].name} completa` : `${SLOTS[T.slot].name} letta, senza viste di lato`);
       beep();
@@ -5953,8 +5694,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     }
     // nothing more to re-read. A state that is not a real cube, or a sticker far off (more than
     // 12 points: 17.8 on the real scan of 30 September, where the state was wrong) never goes on
-    // to the solution. Small disagreements do not prove a wrong state (a synthetic scan read
-    // without errors still had 7.3): the scan ends and the result says which face to check.
+    // to the solution; small disagreements do not prove a wrong state
     if (!validState(d.facelets) || d.worst > 12) {
       stopLive();
       st.still = { c: st.slots[0].c, res: st.slots[0].res };
@@ -5993,6 +5733,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     acts.append(restart); res.append(acts); box.append(res);
     setPill("warn", "Lettura non riuscita");
   }
+
 
   // ---------- 3D view: the cube as it has been reconstructed ----------
   // Every cubelet is drawn with its real size along each axis, so pieces stick out or sink
@@ -6380,7 +6121,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
         document.querySelectorAll("[data-act='sharevideo']").forEach((b) => { b.hidden = false; });
       };
       r.start(1000);
-      live.rec = r; live.recT0 = performance.now(); ori.log = [];
+      live.rec = r;
     } catch (e) { live.rec = null; }
   }
   function stopRecording() { try { if (live.rec && live.rec.state !== "inactive") live.rec.stop(); } catch (e) { /* ignore */ } }
@@ -6389,14 +6130,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (!b) { toast("Nessuna registrazione: fai prima una scansione dal vivo"); return; }
     const ext = b.type.includes("mp4") ? "mp4" : "webm";
     const file = new File([b], `scansione-cubo.${ext}`, { type: b.type });
-    // the phone's orientation during the recording, to replay the scan exactly
-    const sens = ori.log.length ? new File([JSON.stringify({ v: 1, samples: ori.log })], "scansione-cubo-sensori.json", { type: "application/json" }) : null;
-    const files = sens ? [file, sens] : [file];
     try {
-      if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files, title: "Scansione del cubo" }); return; }
-      if (sens && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Scansione del cubo" }); }
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Scansione del cubo" }); return; }
     } catch (e) { if (e && e.name === "AbortError") return; }
-    for (const f of files) { const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name; document.body.append(a); a.click(); a.remove(); }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b); a.download = file.name; document.body.append(a); a.click(); a.remove();
   }
 
   // ---------- recalibration with the solved cube ----------
@@ -6586,7 +6324,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     else if (act === "rescan") newScan();
     else if (act === "back") backToScan(st.slots.findIndex((x) => x.warn) >= 0 ? st.slots.findIndex((x) => x.warn) : 0);
     else if (act === "video") vidIn.click();
-    else if (act === "live") { askOrientation(); startLive(); }
+    else if (act === "live") startLive();
     else if (act === "export") exportScan();
     else if (act === "sharevideo") shareVideo();
     else if (act === "calib") { newScan(); st.calib = true; startLive(); toast("Ricalibrazione: mostrami le sei facce del cubo RISOLTO"); }
