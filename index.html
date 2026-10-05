@@ -5632,10 +5632,10 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const dz = steps[nm];
       // the nine blocks in 3D when the relief of the face is sure (otherwise the feet at the
       // level of the centre, below)
-      const rel = k >= 0 && st.slots[k].res.plx && st.slots[k].res.plx.relief;
-      if (pv && rel && rel.margin >= 0.2) {
-        if (cage === undefined) { cage = cageOf(r, fr, rel); if (cage) cage.k = k; }
-        if (cage) { drawCage(r, map, b, nm, cage, rel); continue; }
+      const dec = pv && k >= 0 ? decodedHeights(k) : null;
+      if (dec) {
+        if (cage === undefined) { cage = cageOf(r, fr, { z: dec.z }); if (cage) { cage.k = k; cage.dec = dec; } }
+        if (cage) { drawCage(r, map, b, nm, cage, { z: dec.z }); continue; }
       }
       if (dz) {
         const inn = [[b.u0, b.v0], [b.u1, b.v0], [b.u1, b.v1], [b.u0, b.v1]].map(([u, v]) => {
@@ -5656,6 +5656,23 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   // heights of the relief (reliefFromViews): what is drawn is height x turn, the shift seen in this
   // very view. Facing the camera the cages close up; turning the cube they open.
   const BLOCKS = { TL: [0, 0], T: [0, 1], TR: [0, 2], L: [1, 0], C: [1, 1], R: [1, 2], BL: [2, 0], B: [2, 1], BR: [2, 2] };
+  const ROT90N = { TL: "TR", T: "R", TR: "BR", R: "B", BR: "BL", B: "L", BL: "TL", L: "T", C: "C" };
+  function decodedHeights(k) {
+    const R = st.red;
+    if (!R || !R.layout || !R.layout.placed || k < 0) return null;
+    const P = Object.keys(R.layout.placed).find((x) => R.layout.placed[x] === k) || (k === 0 ? "F" : null);
+    if (!P) return null;
+    const kk = P === "F" ? 0 : (R.layout.turned && R.layout.turned[P]) || 0, fi = "URFDLB".indexOf(P);
+    const z = {}, red = {};
+    for (const nm in BLOCKS) {
+      let x = nm; for (let q = 0; q < kk; q++) x = ROT90N[x];
+      const idx = fi * 9 + BLOCKS_POS[x];
+      z[nm] = R.thick[R.facelets[idx]] - R.thick[P];
+      red[nm] = R.idx.has(idx);
+    }
+    return { z, red };
+  }
+  const BLOCKS_POS = { TL: 0, T: 1, TR: 2, L: 3, C: 4, R: 5, BL: 6, B: 7, BR: 8 };
   function cageOf(r, fr, rel) {
     const e0 = fr && fr.edges, e = r && r.edges;
     if (!e0 || !e || !e0.C || !e.C || !rel || !rel.z) return null;
@@ -5684,7 +5701,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const P = (u, v) => { const q = MirrorVision.toImage(r, u, v); return map(q[0], q[1]); };
     const cs = [[b.u0, b.v0], [b.u1, b.v0], [b.u1, b.v1], [b.u0, b.v1]];
     const top = cs.map(([u, v]) => P(u, v)), base = cs.map(([u, v]) => P(u + ou, v + ov));
-    const lvl = 0.08 * cage.zbig, bad = redBlocks(st.slots[cage.k] && st.slots[cage.k].res && st.slots[cage.k].res.plx).includes(nm);
+    const lvl = 3, bad = !!(cage.dec && cage.dec.red[nm]);       // heights in % of the side
     const col = bad ? "#FF5A5F" : z > lvl ? "#5AC8FA" : z < -lvl ? "#BF5AF2" : "#FFFFFF";
     ctx.save(); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.6 * dpr;
     for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(top[i][0], top[i][1]); ctx.lineTo(base[i][0], base[i][1]); ctx.stroke(); }
@@ -5918,7 +5935,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (px.turned.length >= 4) {
       try { px.relief = MirrorVision.reliefFromViews(px.front, px.turned); } catch (err) { px.relief = null; }
       // the nine blocks: widths from the front, depth from the relief: real pieces?
-      px.blocks = px.relief && px.relief.margin >= 0.2 ? MirrorVision.blockCheck(sl.res.ext, px.relief.z, CLS) : null;
+      px.blocks = null;   // blocks checked against the relief measured by tilting: wrong way round on the real cube (2 October)
     }
     if (!px.alignChecked && coveredDirs(px).size >= 4) {
       px.alignChecked = true;
@@ -6096,22 +6113,42 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     // parallax was measured. If re-reading a face did not change the disagreements, the
     // other face involved is the one to look at next.
     const count = new Array(6).fill(0), flagged = [];
-    for (const b of d.plx.bad) {
-      const who = [b.slot];
-      for (const o of (d.meas && d.meas[b.idx]) || []) if (!o.w) { const k = slotOf(o.P); if (k != null && !who.includes(k)) who.push(k); }
-      flagged.push(b.idx);
-      for (const k of who) count[k]++;
-    }
+    // The depth from the turned views does not make red pieces any more: on the real cube with a known
+    // scramble (2 October) it put protruding and sinking pieces the wrong way round on most faces and
+    // made red pieces on a cube read right. It stays in the data of the scan.
     for (const b of d.persp.bad) { const k = slotOf(b.P); if (k != null) count[k]++; flagged.push(b.idx); }
     // widths far from the cube read (13 points on «Davanti» on the real scan of 1 October: that
     // corner was wrong and the cube did not end solved) are red pieces too
+    // Perspective: the phone is close to the cube, a piece that sticks out looks bigger and one that
+    // sinks looks smaller (scan with a known scramble, 2 October: widths up to 8 points off on a
+    // cube read right, and 3 red pieces that were not). Every width is corrected with the height of
+    // its tile in the cube just decoded, x / (1 + height / D); D (distance of the phone, in % of the
+    // side) is the one that makes the widths agree best.
+    const obs = [];
     for (let i = 0; i < 54; i++) for (const o of (d.meas && d.meas[i]) || []) {
-      if (o.w && o.w < 1) continue;
-      if (Math.abs(o.x - d.thick[d.facelets[i]]) > 6) { flagged.push(onFace(i, o.P)); const kk = slotOf(o.P); if (kk != null) count[kk]++; }
+      // widths only (a tile and a side): the depth estimates added to the decode are «prospettiva»
+      if ((o.w && o.w < 1) || !o.nm || o.nm === "prospettiva" || !["up", "down", "left", "right"].includes(o.d)) continue;
+      obs.push({ i, o, z: d.thick[d.facelets[onFace(i, o.P)]] - d.thick[o.P], t: d.thick[d.facelets[i]] });
     }
-    if (d.worst > 6) { const k = slotOf(d.worstFrom); if (k != null) count[k] += 2; }
+    let bestD = Infinity, bestC = Infinity;
+    for (const D of [Infinity, 600, 400, 280, 200, 150]) {
+      const cst = obs.reduce((sm, b) => sm + Math.min(64, ((isFinite(D) ? b.o.x / (1 + b.z / D) : b.o.x) - b.t) ** 2), 0);
+      if (cst < bestC) { bestC = cst; bestD = D; }
+    }
+    st.persp = bestD;
+    const wRed = [];
+    let wWorst = 0, wWorstP = null;
+    st.wWorst = null;
+    for (const b of obs) {
+      const x = isFinite(bestD) ? b.o.x / (1 + b.z / bestD) : b.o.x;
+      if (Math.abs(x - b.t) > wWorst) { wWorst = Math.abs(x - b.t); wWorstP = b.o.P; }
+      if (Math.abs(x - b.t) > 6) { flagged.push(onFace(b.i, b.o.P)); wRed.push(onFace(b.i, b.o.P)); const kk = slotOf(b.o.P); if (kk != null) count[kk]++; }
+    }
+    if (window.__dbgOrbit) window.__dbgOrbit.push({ check: { t: Math.round(performance.now()), round: st.round, D: isFinite(bestD) ? bestD : 0, plx: d.plx.bad.map((b) => b.idx), persp: d.persp.bad.map((b) => b.idx), widths: wRed, facelets: d.facelets, worst: +d.worst.toFixed(1) } });
+    st.wWorst = wWorst;
+    if (wWorst > 6) { const k = slotOf(wWorstP); if (k != null) count[k] += 2; }
     const key = flagged.sort((a, b) => a - b).join(",");
-    st.red = { facelets: d.facelets, thick: d.thick, idx: new Set(flagged) };
+    st.red = { facelets: d.facelets, thick: d.thick, idx: new Set(flagged), layout: d.layout };
     updateModel3D();
     // no red piece: the scan is done (the user's rule; before: up to 4 rounds, then on anyway)
     const nRed = st.red.idx.size;
@@ -6153,7 +6190,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     // nothing more to re-read. A state that is not a real cube, or a sticker far off (more than
     // 12 points: 17.8 on the real scan of 30 September, where the state was wrong) never goes on
     // to the solution; small disagreements do not prove a wrong state
-    if (!validState(d.facelets) || d.worst > 12) {
+    if (!validState(d.facelets) || wWorst > 12) {
       stopLive();
       st.still = { c: st.slots[0].c, res: st.slots[0].res };
       drawStage();
@@ -6762,7 +6799,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const fix = $("#fixBox"); fix.textContent = "";
     const dd = st.decoded;
     const pbad = dd && dd.persp && dd.persp.bad.length ? dd.persp.bad : null;
-    if (dd && (dd.worst > 6 || pbad) && s.i === 0 && !s.finished) {
+    // largest width error with the perspective corrected (the raw one counted the depth estimates too)
+    const wv = st.wWorst != null ? st.wWorst : dd ? dd.worst : 0;
+    if (dd && (wv > 6 || pbad) && s.i === 0 && !s.finished) {
       const k = pbad && dd.slotOf ? dd.slotOf(pbad[0].P) : dd.slotOf ? dd.slotOf(dd.worstFrom) : SLOTS.findIndex((x) => x.face === dd.worstFrom);
       const box = el("div", "fix");
       box.append(el("p", "", pbad
