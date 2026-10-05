@@ -5205,8 +5205,76 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     } catch (e) { /* no sound */ }
   }
 
+  // ---------- final check: is the cube really solved? ----------
+  // The solved cube, from the thicknesses of the cube decoded: every face shows its four neighbouring
+  // layers (the top row is as tall as the layer above, and so on). A face read from the front is
+  // compared with the six faces of the solved cube, each turned four ways; the solved cube is flat,
+  // so the perspective does not matter here. Three different faces solved: solved (one is not enough:
+  // a face can look in order while a layer next to it is turned). One face clearly not solved for
+  // several readings: a move went differently.
+  function solvedPatterns() {
+    const th = (st.decoded && st.decoded.thick) || THICK0;
+    const LET = { "0,1,0": "U", "0,-1,0": "D", "1,0,0": "R", "-1,0,0": "L", "0,0,1": "F", "0,0,-1": "B" };
+    const key = (v) => [0, 1, 2].map((i) => Math.round(v[i])).join(",");
+    const out = {};
+    for (const P of "URFDLB") {
+      const f = MirrorVision.photoFrame(P, 0);
+      const up = th[LET[key(f.u)]], dn = th[LET[key(f.u.map((x) => -x))]], rt = th[LET[key(f.r)]], lf = th[LET[key(f.r.map((x) => -x))]];
+      out[P] = { TL: { up, left: lf }, T: { up }, TR: { up, right: rt }, L: { left: lf }, R: { right: rt }, BL: { down: dn, left: lf }, B: { down: dn }, BR: { down: dn, right: rt } };
+    }
+    return out;
+  }
+  function matchSolved(res, pats) {
+    const per = {};
+    for (const P in pats) for (let k = 0; k < 4; k++) {
+      const e = MirrorVision.rotateReading(res, k).ext || {};
+      let sm = 0, n = 0;
+      for (const nm in pats[P]) for (const d in pats[P][nm]) { const x = e[nm] && e[nm][d]; if (typeof x === "number") { sm += Math.abs(x - pats[P][nm][d]); n++; } }
+      if (n >= 9 && (per[P] == null || sm / n < per[P])) per[P] = sm / n;
+    }
+    const ord = Object.keys(per).sort((a, b) => per[a] - per[b]);
+    return ord.length ? { P: ord[0], v: per[ord[0]], gap: ord.length > 1 ? per[ord[1]] - per[ord[0]] : 99 } : null;
+  }
+  function handleVerify(res, now) {
+    const V = live.verify;
+    live.last = res;
+    if (!res.ok || (res.missing || 0) > 0) { live.tip = `Mostrami una faccia ben dritta e tutta inquadrata (${V.seen.size} di 3 controllate)`; return; }
+    const m = matchSolved(res, V.pats);
+    if (!m) return;
+    if (m.v <= 3.5 && m.gap >= 1.5) {
+      V.bad = 0;
+      V.run = V.run && V.run.P === m.P ? { P: m.P, n: V.run.n + 1 } : { P: m.P, n: 1 };
+      if (V.run.n >= 3 && !V.seen.has(m.P)) {
+        V.seen.add(m.P); beep();
+        if (V.seen.size >= 3) { verifyDone(true); return; }
+        toast(`Questa faccia è a posto (${V.seen.size} di 3)`);
+      }
+      live.tip = V.seen.has(m.P) ? `Questa è a posto (${V.seen.size} di 3): girane un'altra verso di te` : "Tienila ferma un attimo…";
+    } else if (m.v > 7) {
+      V.run = null; V.bad++;
+      live.tip = "Tienila ferma un attimo…";
+      if (V.bad >= 6) verifyDone(false);
+    }
+  }
+  function verifyDone(ok) {
+    window.__verifyResult = ok;
+    stopLive();
+    st.still = st.slots[0] && st.slots[0].res ? { c: st.slots[0].c, res: st.slots[0].res } : st.still;
+    if (ok) {
+      setPill("ok", "Cubo risolto");
+      $("#moveText").textContent = "Controllato con la fotocamera: il cubo è risolto.";
+      if (verifyBtn) verifyBtn.style.display = "none";
+      return;
+    }
+    setPill("warn", "Non risolto");
+    $("#moveText").textContent = "Il cubo non è risolto: probabilmente una mossa è andata diversa da quella indicata. Rifacciamo la scansione da qui.";
+    if (verifyBtn) { verifyBtn.style.display = "block"; verifyBtn.textContent = "Nuova scansione"; verifyBtn.dataset.mode = "scan"; }
+  }
+  let verifyBtn = null;
+  window.__verify = () => startLive({ verify: true });
   async function startLive(opt = {}) {
     live.check = !!opt.check; live.start = !!opt.start; live.chk = null; live.chkMsg = ""; live.depthFor = null;
+    live.verify = opt.verify ? { seen: new Set(), bad: 0, run: null, pats: solvedPatterns() } : null;
     trkReset();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { liveUnavailable(); return; }
     try { live.audio = live.audio || new (window.AudioContext || window.webkitAudioContext)(); live.audio.resume(); } catch (e) { /* ignore */ }
@@ -5214,7 +5282,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) { liveUnavailable(); return; }
-    if (!live.check && st.phase !== "scan") newScan();
+    if (!live.check && !live.verify && st.phase !== "scan") newScan();
     const v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.srcObject = stream;
     v.className = "live-video";
@@ -5223,7 +5291,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     Object.assign(live, { on: true, stream, video: v, track: stream.getVideoTracks()[0], torch: false,
       busy: false, jobs: {}, roi: null, last: null, cand: null });
     live.worker = live.worker || makeWorker();
-    if (!live.check) startRecording(stream);
+    if (!live.check && !live.verify) startRecording(stream);
     try {
       const caps = live.track.getCapabilities ? live.track.getCapabilities() : {};
       if (caps.torch) { live.torch = false; /* flash off by default: the button turns it on */ $("#btnTorch").hidden = false; }
@@ -5429,6 +5497,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     const now = performance.now(), v = live.video;
     res.job = job;
     if (live.check) { handleCheck(res, now); return; }
+    if (live.verify) { handleVerify(res, now); return; }
     if (live.pending && now - live.pending.t > 12000) { live.pending = null; closeChooser(); }
 
     trkAdd(res, job, now);
@@ -5767,15 +5836,15 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       const good = !live.turnPh && r.ok && live.cand && live.cand.reads.includes(r);
       if (!live.turnPh) drawReading(r, map, !good);
       if (good) { drawMissing(r, map, live.cand.cov && live.cand.cov.missing); drawProgress(r, map, live.cand.frac || 0); }
-      if (!live.check) drawFaceLabel(r, map, s / j.k);
-    } else if (!live.check) drawFaceLabel(null);
+      if (!live.check && !live.verify) drawFaceLabel(r, map, s / j.k);
+    } else if (!live.check && !live.verify) drawFaceLabel(null);
     pendingUI();
     if (!live.check) drawMiniMap();
     const tip = $("#liveTip");
     // while a new face waits for its name, the tip is the question
     const tipText = live.pending ? `Questa è «${SLOTS[live.pending.slot].name}»? Confermala, oppure tocca «Cambia»` : misalignTip() || recheckTip() || blockTip() || live.tip;
     if (tip.textContent !== tipText) tip.textContent = tipText;
-    const pill = live.check ? "Controllo della posizione" : `Faccia ${st.cur + 1} di 6: ${SLOTS[st.cur].name}`;
+    const pill = live.check ? "Controllo della posizione" : live.verify ? "Controllo finale" : `Faccia ${st.cur + 1} di 6: ${SLOTS[st.cur].name}`;
     if (live.lastPill !== pill) { live.lastPill = pill; setPill("busy", pill); }
   }
   function drawProgress(res, map, frac) {
@@ -6826,10 +6895,18 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       setPill("ok", "Già risolto");
       return;
     }
+    if (!verifyBtn) {
+      verifyBtn = document.createElement("button");
+      verifyBtn.type = "button"; verifyBtn.className = "btn primary";
+      verifyBtn.style.cssText = "display:none;margin:10px auto 0;";
+      verifyBtn.addEventListener("click", () => { if (verifyBtn.dataset.mode === "scan") { verifyBtn.style.display = "none"; newScan(); startLive(); } else startLive({ verify: true }); });
+      $("#moveText").after(verifyBtn);
+    }
+    verifyBtn.style.display = s.finished ? "block" : "none"; verifyBtn.dataset.mode = ""; verifyBtn.textContent = "Verifica che sia risolto";
     if (s.finished) {
       $("#moveCount").textContent = `${n} mosse fatte`;
       $("#moveCode").textContent = "✓";
-      $("#moveText").textContent = "Se tutto è andato bene, il cubo è risolto.";
+      $("#moveText").textContent = "Mostra il cubo alla fotocamera: controllo che sia davvero risolto.";
       setPill("ok", "Finito");
     } else {
       const m = s.moves[s.i];
