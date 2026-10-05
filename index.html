@@ -5492,6 +5492,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (res.ok && !msg) {
       const twin = already(res, 5);
       if (twin >= 0) {
+        // a face already read: the question «...?» on a new face is dropped (the cube was moved on,
+        // or that face was not new at all)
+        if (live.pending && !(st.flagged && st.flagged.has(twin))) { live.pending = null; closeChooser(); }
         live.lastFace = { slot: twin, t: now };
         trkAnchor(twin, res, job, now);
         if (!(st.flagged && st.flagged.has(twin))) { collectTurned(res, now); msg = `«${SLOTS[twin].name}» l'ho già vista: continua a ruotare`; bad = true; }
@@ -5556,6 +5559,11 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
         const to = boxForNew(slot);
         if (to < 0) { live.recent = []; live.cand = null; live.last = res; return; }
         st.cur = to;
+        if (CONFIRM && st.flagged && st.flagged.has(to) && live.lastFace && live.lastFace.slot === to && now - live.lastFace.t < 2000) {
+          live.last = res; const done = confirmLive(c, job, { slot: to }); live.recent = [];
+          live.waitTurn = { slot: done, seen: now };
+          return;
+        }
         if (CONFIRM && window.__autoConfirm !== true) {
           if (!live.pending) offerConfirm(c, job, res, now);
           live.recent = []; live.last = res;
@@ -6099,7 +6107,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     // corner was wrong and the cube did not end solved) are red pieces too
     for (let i = 0; i < 54; i++) for (const o of (d.meas && d.meas[i]) || []) {
       if (o.w && o.w < 1) continue;
-      if (Math.abs(o.x - d.thick[d.facelets[i]]) > 6) { flagged.push(i); const kk = slotOf(o.P); if (kk != null) count[kk]++; }
+      if (Math.abs(o.x - d.thick[d.facelets[i]]) > 6) { flagged.push(onFace(i, o.P)); const kk = slotOf(o.P); if (kk != null) count[kk]++; }
     }
     if (d.worst > 6) { const k = slotOf(d.worstFrom); if (k != null) count[k] += 2; }
     const key = flagged.sort((a, b) => a - b).join(",");
@@ -6108,11 +6116,15 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     // no red piece: the scan is done (the user's rule; before: up to 4 rounds, then on anyway)
     const nRed = st.red.idx.size;
     if (!nRed) for (let j = 0; j < 6; j++) count[j] = 0;
-    if (st.lastCheck && st.lastCheck.key === key && st.lastCheck.slot != null) count[st.lastCheck.slot] = 0;
     st.rechecks = st.rechecks || new Array(6).fill(0);
     st.round = (st.round || 0) + 1;
     let k = -1;
-    for (let j = 0; j < 6; j++) if (count[j] && st.rechecks[j] < 3 && (k < 0 || count[j] > count[k])) k = j;
+    // the face checked last, while it still has red pieces: stay on it (before: on to the other face
+    // of that piece, and back and forth); after three tries, the next face with red pieces
+    const lastK = st.lastCheck ? st.lastCheck.slot : null;
+    if (lastK != null && count[lastK] > 0 && st.rechecks[lastK] < 3) k = lastK;
+    else for (let j = 0; j < 6; j++) if (count[j] && st.rechecks[j] < 3 && (k < 0 || count[j] > count[k])) k = j;
+    const again = k >= 0 && k === lastK;
     st.lastCheck = { key, slot: k >= 0 ? k : null };
     if (k >= 0 && st.round <= 12) {
       st.rechecks[k]++;
@@ -6123,7 +6135,9 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
       renderScan();
       setPill("warn", `Da ricontrollare: ${SLOTS[k].name}`);
       toast(`Qualcosa non torna sulla faccia «${SLOTS[k].name}»`);
-      live.tip = nRed
+      live.tip = nRed && again
+        ? `Ancora ${nRed === 1 ? "un pezzo rosso" : nRed + " pezzi rossi"} su «${SLOTS[k].name}»: rileggila ancora, di fronte e poi inclinata in tutte le direzioni`
+        : nRed
         ? `${nRed} ${nRed === 1 ? "pezzo rosso" : "pezzi rossi"}: mostrami di nuovo «${SLOTS[k].name}», di fronte e poi inclinata. Li vedi in rosso sul cubetto in alto`
         : `Una misura non torna: mostrami di nuovo «${SLOTS[k].name}»`;
       return;
@@ -6155,6 +6169,16 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
   // The check does not add up and there is nothing left to re-read (or the state is not a
   // real cube): no solution from a result known to be wrong. Before, the page went on anyway
   // and the solver failed («Errore del risolutore»).
+  // The stickers of every corner and edge (URFDLB, 0-based): a width measured on one face tells the
+  // size of the piece towards another face; its red goes on the side of the piece on the face where
+  // it was measured, the face to look at again.
+  const PIECES = [[8, 9, 20], [6, 18, 38], [0, 36, 47], [2, 45, 11], [29, 26, 15], [27, 44, 24], [33, 53, 42], [35, 17, 51],
+    [5, 10], [7, 19], [3, 37], [1, 46], [32, 16], [28, 25], [30, 43], [34, 52], [23, 12], [21, 41], [50, 39], [48, 14]];
+  function onFace(i, P) {
+    const pc = PIECES.find((x) => x.includes(i));
+    const f = pc && pc.find((x) => "URFDLB"[Math.floor(x / 9)] === P);
+    return f != null ? f : i;
+  }
   // Red pieces are left after reading their faces again several times: read once more, or go
   // on with the solution anyway (the user decides).
   function redLeft(count, nRed) {
