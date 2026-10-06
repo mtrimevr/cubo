@@ -11,9 +11,17 @@
 <meta name="apple-mobile-web-app-title" content="Mirror Cube">
 <meta name="theme-color" content="#0E1A2B">
 <title>Calibro per Mirror Cube</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* fonts in the site (before: Google Fonts), latin subset */
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 400; font-display: swap; src: url("barlow-400.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 500; font-display: swap; src: url("barlow-500.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 600; font-display: swap; src: url("barlow-600.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-style: normal; font-weight: 500; font-display: swap; src: url("barlow-sc-500.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-style: normal; font-weight: 600; font-display: swap; src: url("barlow-sc-600.woff2") format("woff2"); }
+details.more { margin-top: 12px; }
+details.more > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
+.app[data-live="on"] details.more { display: none; }
+</style>
 <style>
 :root {
   box-sizing: border-box;
@@ -259,20 +267,27 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
           </div>
         </div>
         <ol class="slots" id="slots"></ol>
-        <div class="how" id="how"></div>
         <div class="actions no-live">
           <button class="btn primary wide" type="button" data-act="live">Scansione dal vivo</button>
-          <button class="btn" type="button" data-act="video">Registra un video</button>
-          <button class="btn" type="button" data-act="shot" id="btnShot">Scatta foto</button>
-          <button class="btn wide" type="button" data-act="file">Carica foto o video</button>
         </div>
         <div class="actions only-live">
           <button class="btn" type="button" data-act="torch" id="btnTorch" hidden>Luce</button>
           <button class="btn" type="button" data-act="stoplive">Ferma</button>
         </div>
-        <p class="hint"><b>Dal vivo:</b> inquadri il cubo e ti guido io. Se un tassello è nascosto da un pezzo sporgente lo segno con una X rossa: sposta un po' il telefono attorno alla faccia finché sparisce. Quando una faccia è letta te lo confermo e passo alla successiva: davanti, poi giri verso sinistra tre volte, poi inclini verso di te e lontano da te. Su claude.ai, nell'app o in Safari, la fotocamera dal vivo è bloccata: funziona se apri la pagina da un sito tuo. Altrimenti usa il video.</p>
-        <p class="hint"><b>Con il video:</b> attiva il flash, tieni il telefono a circa 30 cm e fermati un secondo su ogni faccia. Davanti, poi gira il cubo verso sinistra tre volte (destra, dietro, sinistra). Torna davanti e inclinalo verso di te (sopra), torna davanti e inclinalo lontano da te (sotto). Le facce le trovo io. Se il pulsante non apre la fotocamera, registra con l'app Fotocamera e poi usa «Carica foto o video».</p>
-        <p class="hint">Telefono parallelo alla faccia, a circa 30 cm e senza zoom, con tutta la faccia nella foto e un po' di margine intorno.</p>
+        <p class="hint"><b>Dal vivo:</b> tieni il cubo in mano e mostra una faccia alla volta, ben dritta e tutta inquadrata. Conferma il nome che compare sulla faccia, oppure tocca «Cambia». Poi inclina la faccia a destra, a sinistra, in su e in giù finché le quattro frecce diventano verdi. Se alla fine qualche pezzo è rosso, rileggi la faccia che ti indico. Meglio una luce diffusa, senza riflessi diretti.</p>
+        <details class="more">
+          <summary>Altri metodi: video o foto</summary>
+          <div class="actions">
+            <button class="btn" type="button" data-act="video">Registra un video</button>
+            <button class="btn" type="button" data-act="shot" id="btnShot">Scatta foto</button>
+            <button class="btn wide" type="button" data-act="file">Carica foto o video</button>
+          </div>
+          <div class="how" id="how"></div>
+          <p class="hint"><b>Con il video:</b> attiva il flash, tieni il telefono a circa 30 cm e fermati un secondo su ogni faccia. Davanti, poi gira il cubo verso sinistra tre volte (destra, dietro, sinistra). Torna davanti e inclinalo verso di te (sopra), torna davanti e inclinalo lontano da te (sotto). Le facce le trovo io. Se il pulsante non apre la fotocamera, registra con l'app Fotocamera e poi usa «Carica foto o video».</p>
+          <p class="hint">Telefono parallelo alla faccia, a circa 30 cm e senza zoom, con tutta la faccia nella foto e un po' di margine intorno.</p>
+        </details>
+        
+        
 
         <div id="scanResult"></div>
         <div class="actions"><button class="btn" type="button" data-act="export">Salva i dati della scansione</button><button class="btn" type="button" data-act="sharevideo" hidden>Salva il video della scansione</button></div>
@@ -307,13 +322,13 @@ h2 { margin: 0 0 6px; font: 600 21px/1.2 "Barlow", system-ui, sans-serif; letter
         </div>
         <div id="exportBox"></div>
         <div class="actions">
-          <button class="btn" type="button" data-act="back">Torna alle foto</button>
+          <button class="btn" type="button" data-act="back">Torna alla scansione</button>
           <button class="btn" type="button" data-act="rescan">Nuova mescolata</button>
         </div>
       </section>
 
       <div class="foot">
-        <p>Misure del tuo cubo, prese dalle sei foto che mi hai mandato: strati esterni di 16,8 e 49,6, 22,7 e 43,7, 29,4 e 36,9 per cento del lato. Quale faccia è quale lo capisco dalle foto: i centri stanno ad altezze diverse e da vicino si vede.</p>
+        <p>Fatto per il Mirror Cube 3×3 dorato: strati esterni di 16,8 e 49,6, 22,7 e 43,7, 29,4 e 36,9 per cento del lato. Con un altro modello, usa «Ricalibra con il cubo risolto».</p>
       </div>
       <input id="shot" class="sr-only" type="file" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
       <input id="file" class="sr-only" type="file" accept="image/*,video/*" multiple tabindex="-1" aria-hidden="true">
@@ -4252,6 +4267,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (p !== "solve" && v3.on) { close3D(); $("#btn3d").textContent = "Vedi il cubo in 3D"; }
     if (p === "solve" && !v3.on) { v3.on = true; $("#btn3d").textContent = "Torna al disegno della mossa"; }
     st.phase = p; app.dataset.phase = p;
+    keepAwake(p === "solve");
     const on = { scan: 0, solve: 1 }[p];
     [...$("#steps").children].forEach((li, i) => { li.className = i === on ? "on" : i < on ? "done" : ""; });
     if (p === "scan") renderScan();
@@ -4275,12 +4291,12 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     st.cur = 0; st.still = null; st.decoded = null;
     $("#scanResult").innerHTML = "";
     setPhase("scan");
-    setPill("idle", `Foto 1 di 6: ${SLOTS[0].name}`);
+    setPill("idle", `Faccia 1 di 6: ${SLOTS[0].name}`);
   }
 
   function renderScan() {
     $("#scanTitle").textContent = "Inquadra il cubo mescolato";
-    $("#scanLead").textContent = "Un video di circa 20 secondi, oppure sei foto nell'ordine indicato. Poi ti dico le mosse.";
+    $("#scanLead").textContent = "Mostra una faccia alla volta, conferma il suo nome e inclinala nelle quattro direzioni: poi ti dico le mosse.";
     const ol = $("#slots"); ol.textContent = "";
     st.slots.forEach((s, i) => {
       const li = el("li"), b = el("button", "slot");
@@ -4297,7 +4313,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
         st.cur = i;
         st.still = s.c ? { c: s.c, res: s.res } : null;
         renderScan(); drawStage();
-        setPill(s.res ? (s.res.ok ? "ok" : "warn") : "idle", s.res ? (s.res.ok ? `${SLOTS[i].name}: letta` : WHY[s.res.why] || "Foto non leggibile") : `Foto ${i + 1} di 6: ${SLOTS[i].name}`);
+        setPill(s.res ? (s.res.ok ? "ok" : "warn") : "idle", s.res ? (s.res.ok ? `${SLOTS[i].name}: letta` : WHY[s.res.why] || "Foto non leggibile") : `Faccia ${i + 1} di 6: ${SLOTS[i].name}`);
       });
       li.append(b); ol.append(li);
     });
@@ -5096,6 +5112,31 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     $("#moveText").textContent = "Il cubo non è risolto: probabilmente una mossa è andata diversa da quella indicata. Rifacciamo la scansione da qui.";
     if (verifyBtn) { verifyBtn.style.display = "block"; verifyBtn.textContent = "Nuova scansione"; verifyBtn.dataset.mode = "scan"; }
   }
+  // ---------- the phone as an app: screen awake, interruptions, back button ----------
+  // Screen kept on while scanning and while following the solution (released by the system when
+  // the page is hidden, asked again when it comes back).
+  const wake = { lock: null };
+  async function keepAwake(on) {
+    try {
+      if (on && !wake.lock && navigator.wakeLock) {
+        wake.lock = await navigator.wakeLock.request("screen");
+        wake.lock.addEventListener("release", () => { wake.lock = null; });
+      } else if (!on && wake.lock) { const l = wake.lock; wake.lock = null; await l.release(); }
+    } catch (e) { wake.lock = null; }
+  }
+  // Another app in front: the camera stops (Android takes it anyway); back in the app it opens again
+  // where it was, without losing the faces read.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (live.on) { live.resumeWith = { check: live.check, verify: !!live.verify }; stopLive(); }
+    } else {
+      if (live.resumeWith) { const o = live.resumeWith; live.resumeWith = null; startLive(o); }
+      if (live.on || st.phase === "solve") keepAwake(true);
+    }
+  });
+  // Back button or gesture (Android) while the camera is on: it closes the camera, as «Ferma»,
+  // instead of leaving the app.
+  window.addEventListener("popstate", () => { if (live.on) { live.popping = true; stopLive(); live.popping = false; } });
   let verifyBtn = null;
   window.__verify = () => startLive({ verify: true });
   async function startLive(opt = {}) {
@@ -5107,7 +5148,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
-    } catch (e) { liveUnavailable(); return; }
+    } catch (e) { liveUnavailable(e); return; }
     if (!live.check && !live.verify && st.phase !== "scan") newScan();
     const v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.srcObject = stream;
@@ -5117,6 +5158,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     Object.assign(live, { on: true, stream, video: v, track: stream.getVideoTracks()[0], torch: false,
       busy: false, jobs: {}, roi: null, last: null, cand: null });
     live.worker = live.worker || makeWorker();
+    keepAwake(true);
+    try { if (!history.state || !history.state.calibroLive) history.pushState({ calibroLive: 1 }, ""); } catch (e) { /* ignore */ }
     if (!live.check && !live.verify) startRecording(stream);
     try {
       const caps = live.track.getCapabilities ? live.track.getCapabilities() : {};
@@ -5151,6 +5194,8 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     window.scrollTo(0, 0);
   });
   function stopLive() {
+    if (!live.popping && live.on && history.state && history.state.calibroLive) { try { history.back(); } catch (e) { /* ignore */ } }
+    if (st.phase !== "solve") keepAwake(false);
     live.pending = null; live.misalign = null; closeChooser(); if (pendBar) pendBar.hidden = true; if (misBar) misBar.hidden = true;
     stopRecording();
     $("#flashBtn").hidden = true;
@@ -5167,9 +5212,22 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     m3.key = ""; updateModel3D();
     drawStage();
   }
-  function liveUnavailable() {
-    const msg = "Qui la fotocamera dal vivo è bloccata: succede nell'app di Claude e anche su claude.ai in Safari. Per la scansione dal vivo apri la pagina da un sito tuo, per esempio GitHub Pages. Intanto puoi usare il video.";
-    setPill("warn", "Fotocamera dal vivo non disponibile");
+  // Why the camera did not open: inside claude.ai (blocked there), no permission, in use by another
+  // app, no camera. Before, every error got the claude.ai message, also on Android.
+  function cameraErrorText(err) {
+    const inClaude = /claude\.ai|claudeusercontent/.test(location.hostname) || (() => { try { return window.top !== window; } catch (e) { return true; } })();
+    const n = err && err.name;
+    if (n === "NotAllowedError" || n === "SecurityError") return inClaude ? null : "La pagina non ha il permesso di usare la fotocamera. Consentilo per questo sito nelle impostazioni del browser (o dell'app) e riprova.";
+    if (n === "NotReadableError" || n === "AbortError" || n === "TrackStartError") return "La fotocamera è già usata da un'altra app: chiudila e riprova.";
+    if (n === "NotFoundError" || n === "OverconstrainedError" || n === "DevicesNotFoundError") return "Non trovo una fotocamera su questo dispositivo.";
+    if (!err && !inClaude && !window.isSecureContext) return "La fotocamera funziona solo con un indirizzo sicuro (https).";
+    if (err && !inClaude) return `Non riesco ad aprire la fotocamera (${n || "errore"}). Riprova; altrimenti usa un video o le foto da «Altri metodi».`;
+    return null;
+  }
+  function liveUnavailable(err) {
+    const own = cameraErrorText(err);
+    const msg = own || "Qui la fotocamera dal vivo è bloccata: succede nell'app di Claude e anche su claude.ai in Safari. Per la scansione dal vivo apri la pagina da un sito tuo, per esempio GitHub Pages. Intanto puoi usare il video.";
+    setPill("warn", own ? "Fotocamera non disponibile" : "Fotocamera dal vivo non disponibile");
     toast(msg);
     const box = $("#scanResult"); box.innerHTML = "";
     const r = el("div", "result"); r.append(el("p", "", msg)); box.append(r);
@@ -6164,7 +6222,7 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     if (window.THREE) return Promise.resolve();
     return new Promise((res, rej) => {
       const sc = document.createElement("script");
-      sc.src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
+      sc.src = "three.min.js";              // in the site (before: cdnjs), works offline too
       sc.onload = res; sc.onerror = rej; document.head.append(sc);
     });
   }
@@ -6542,8 +6600,14 @@ if (typeof module !== "undefined") module.exports = MirrorVision;
     try {
       if (!window.MediaRecorder) return;
       const type = ["video/mp4", "video/webm;codecs=vp9", "video/webm"].find((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
-      const r = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 2500000 } : undefined);
-      r.ondataavailable = (e) => { if (e.data && e.data.size) live.recChunks.push(e.data); };
+      // for the diagnosis of a scan: 1.2 Mbit/s and at most 6 minutes (about 55 MB in memory; before
+      // 2.5 Mbit/s without a limit, too much for a cheap Android phone)
+      const r = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 1200000 } : undefined);
+      const t0 = performance.now();
+      r.ondataavailable = (e) => {
+        if (e.data && e.data.size) live.recChunks.push(e.data);
+        if (performance.now() - t0 > 6 * 60 * 1000 && r.state === "recording") { try { r.stop(); } catch (err) { /* ignore */ } }
+      };
       r.onstop = () => {
         if (!live.recChunks.length) return;
         const t = r.mimeType || type || "video/mp4";

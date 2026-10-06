@@ -1,8 +1,8 @@
 // Keeps the page working offline: everything is served from the cache and refreshed in the
 // background, so a new version shows up the second time the app is opened after an update.
-const CACHE = "calibro-v2";
+const CACHE = "calibro-v3";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png", "./apple-touch-icon.png",
-  "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"];
+  "./three.min.js", "./barlow-400.woff2", "./barlow-500.woff2", "./barlow-600.woff2", "./barlow-sc-500.woff2", "./barlow-sc-600.woff2"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
